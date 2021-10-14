@@ -1,4 +1,5 @@
-from __init__ import MNIST, np
+import numpy as np
+from mnist import MNIST
 
 
 def to_categorical(label):

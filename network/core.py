@@ -1,4 +1,4 @@
-from __init__ import np
+import numpy as np
 
 
 class DenseLayer(object):
@@ -58,8 +58,3 @@ def derivative_relu(z):
 def categorical_cross_entropy(y_true, y_pred):
     return (-1 / y_true.shape[0]) * np.sum(y_true * np.log(y_pred + 1e-5))
 
-
-def to_categorical(label):
-    list_ = [0.] * 11
-    list_[label] = 1.
-    return list_
