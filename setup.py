@@ -6,5 +6,6 @@ setup(
     packages=find_packages(),
     install_requires=[
         'numpy'
-    ]
+    ],
+    url='https://github.com/Viyachikhh/network'
 )
