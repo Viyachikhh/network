@@ -1,5 +1,5 @@
-from network.core import np, categorical_cross_entropy, NeuralNetwork
-from network.load import load
+from dir_network.network import np, categorical_cross_entropy, NeuralNetwork
+from dir_network.network import load
 
 X_train, y_train, X_test, y_test = load()
 

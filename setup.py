@@ -1,10 +1,10 @@
-from os import listdir
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name='network',
     version='0.1',
-    packages=list(map(lambda x: 'network.' + x, listdir('network/'))),
+    packages=['dir_network.network'],
+    package_dir={'': 'network'},
     install_requires=[
         'numpy'
     ],
