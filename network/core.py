@@ -20,7 +20,7 @@ class DenseLayer(object):
         self.history = (vdw, vdb)
 
     def __call__(self, inputs):
-        h = np.dot(self.weights, inputs.T) + self.bias
+        h = (self.weights @ inputs.T) + self.bias
         h = h.T
         if self.activation != 'softmax':
             return np.where(h > 0, h, 0)
@@ -42,13 +42,13 @@ class NeuralNetwork(object):
     def back_propagation(self, y_true, states, input_shape):
 
         dZ2 = states[-1] - y_true
-        db2 = (1 / input_shape) * np.sum(dZ2, axis=0, keepdims=True).reshape(-1, 1)  # (11,)
-        dW2 = (1 / input_shape) * np.dot(dZ2.T, states[-2])  # (11, 128)
+        db2 = (1 / input_shape) * dZ2.sum(axis=0).reshape(-1, 1) # (11,)
+        dW2 = (1 / input_shape) * (dZ2.T @ states[-2])  # (11, 128)
         self.output.update_weights_and_history(dW2, db2)
 
-        dZ = np.dot(dZ2, self.output.weights) * derivative_relu(states[-2])  # (60000, 128)
-        db = (1 / input_shape) * np.sum(dZ, axis=0, keepdims=True).reshape(-1, 1)  # (128,)
-        dW = (1 / input_shape) * np.dot(dZ.T, states[-3])  # (128, 784)
+        dZ = (dZ2 @ self.output.weights) * derivative_relu(states[-2])  # (60000, 128)
+        db = (1 / input_shape) * dZ.sum(axis=0).reshape(-1, 1)  # (128,)
+        dW = (1 / input_shape) * (dZ.T @ states[-3])  # (128, 784)
         self.layer_1.update_weights_and_history(dW, db)
 
 
