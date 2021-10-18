@@ -9,14 +9,14 @@ class DenseLayer(object):
                                          high=np.sqrt(6 / (self.layer_size + self.prev_layer_size)),
                                          size=(self.layer_size, self.prev_layer_size))
         self.bias = np.zeros((self.layer_size, 1))
-        self.history = (self.weights, self.bias)
+        self.history = (0, 0)
         self.activation = activation
 
     def update_weights_and_history(self, gradW, gradb, learning_rate=0.004, beta=0.9):
-        vdw = beta * self.history[0] + (1 - beta) * gradW
-        vdb = beta * self.history[1] + (1 - beta) * gradb
-        self.weights -= learning_rate * vdw
-        self.bias -= learning_rate * vdb
+        vdw = beta * self.history[0] - learning_rate * gradW
+        vdb = beta * self.history[1] - learning_rate * gradb
+        self.weights += vdw
+        self.bias += vdb
         self.history = (vdw, vdb)
 
     def __call__(self, inputs):

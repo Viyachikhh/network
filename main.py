@@ -6,7 +6,7 @@ from network.load import load
 
 X_train, y_train, X_val, y_val = load()
 
-epochs = 200
+epochs = 20
 
 network = NeuralNetwork()
 train_loss = []
