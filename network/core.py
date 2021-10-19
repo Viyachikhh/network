@@ -26,7 +26,7 @@ class DenseLayer(object):
             return np.where(h > 0, h, 0)
         else:
             exp_h = np.exp(h)
-            return exp_h / exp_h.sum()
+            return exp_h / exp_h.sum(axis=1).reshape(-1, 1)
 
 
 class NeuralNetwork(object):
