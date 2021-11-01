@@ -1,7 +1,14 @@
 import numpy as np
+from network.activations import *
+
+
+dict_activations = {'tanh': tanh, 'sigmoid': sigmoid, 'relu': relu, 'softmax': softmax}
+dict_derivatives = {'tanh': derivative_tanh, 'sigmoid': derivative_sigmoid,
+                    'relu': derivative_relu, 'softmax': derivative_softmax}
 
 
 class DenseLayer(object):
+
     def __init__(self, layer_size, prev_layer_size, activation='softmax'):
         self.layer_size = layer_size
         self.prev_layer_size = prev_layer_size
@@ -10,7 +17,7 @@ class DenseLayer(object):
                                          size=(self.layer_size, self.prev_layer_size))
         self.bias = np.zeros((self.layer_size, 1))
         self.history = (0, 0)
-        self.activation = activation
+        self.activation = dict_activations.get(activation, None)
 
     def update_weights_and_history(self, gradW, gradb, learning_rate=0.004, beta=0.9):
         vdw = beta * self.history[0] - learning_rate * gradW
@@ -22,38 +29,49 @@ class DenseLayer(object):
     def __call__(self, inputs):
         h = (self.weights @ inputs.T) + self.bias
         h = h.T
-        if self.activation != 'softmax':
-            return np.where(h > 0, h, 0)
-        else:
-            exp_h = np.exp(h)
-            return exp_h / exp_h.sum(axis=1).reshape(-1, 1)
+        return h if self.activation is None else self.activation(h)
 
 
 class NeuralNetwork(object):
-    def __init__(self, n_classes=11, neural_count=128):
-        self.layer_1 = DenseLayer(neural_count, prev_layer_size=784, activation='relu')
-        self.output = DenseLayer(n_classes, prev_layer_size=neural_count, activation='softmax')
+    def __init__(self, n_classes=11, dense_layer_count=1, neural_counts=[128], activations=['relu']):
+        assert dense_layer_count == len(neural_counts)
+        assert dense_layer_count == len(activations)
+        self.history_outputs = []
+        #self.dense_layer_count = dense_layer_count
+        for i in range(dense_layer_count):
+            setattr(self, f'layer_{i}', DenseLayer(neural_counts[i],
+                                                     784 if i == 0 else neural_counts[i-1], activations[i]))
+        self.output = DenseLayer(n_classes, prev_layer_size=neural_counts[-1], activation='softmax')
 
     def __call__(self, inputs):
-        state1 = self.layer_1(inputs)
-        state2 = self.output(state1)
-        return inputs, state1, state2
+        self.history_outputs = [inputs]
+        dense = list(vars(self).keys())[1:]
+        for i in range(len(dense) - 1):
+            layer = getattr(self, dense[i])
+            x = layer(inputs) if i == 0 else layer(x)
+            self.history_outputs.append(x)
+        result = self.output(x)
+        return result  #
 
-    def back_propagation(self, y_true, states, input_shape):
+    def back_propagation(self, y_true, y_pred, batch_size):
+        layers = list(vars(self).keys())[::-1][:-1]
+        for i, layer in enumerate(layers):
+            if i == 0:
+                dZ = y_pred - y_true
+                #print('dZ', dZ.shape)
+            else:
+                #print('else, dz Shape', dZ.shape)
+                weights = getattr(self, layers[i-1]).weights
+                #print('w', weights.shape)
+                activation = getattr(self, layer).activation.__name__
+                print(activation)
+                dZ = (dZ @ weights) * dict_derivatives[activation](self.history_outputs[-i])
+                #print('dZ', dZ.shape)
+            db = (1 / batch_size) * dZ.sum(axis=0).reshape(-1, 1) # (11,)
+            dW = (1 / batch_size) * (dZ.T @ self.history_outputs[-(i+1)])
+            #print(f'dW = {dW.shape}, db = {db.shape}')
+            getattr(self, layers[i]).update_weights_and_history(dW, db)
 
-        dZ2 = states[-1] - y_true
-        db2 = (1 / input_shape) * dZ2.sum(axis=0).reshape(-1, 1) # (11,)
-        dW2 = (1 / input_shape) * (dZ2.T @ states[-2])  # (11, 128)
-        self.output.update_weights_and_history(dW2, db2)
-
-        dZ = (dZ2 @ self.output.weights) * derivative_relu(states[-2])  # (60000, 128)
-        db = (1 / input_shape) * dZ.sum(axis=0).reshape(-1, 1)  # (128,)
-        dW = (1 / input_shape) * (dZ.T @ states[-3])  # (128, 784)
-        self.layer_1.update_weights_and_history(dW, db)
-
-
-def derivative_relu(z):
-    return np.where(z > 0, 1, 0)
 
 
 def categorical_cross_entropy(y_true, y_pred):
