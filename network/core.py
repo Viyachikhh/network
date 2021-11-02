@@ -19,7 +19,7 @@ class DenseLayer(object):
         self.history = (0, 0)
         self.activation = dict_activations.get(activation, None)
 
-    def update_weights_and_history(self, gradW, gradb, learning_rate=0.004, beta=0.9):
+    def update_weights_and_history(self, gradW, gradb, learning_rate, beta):
         vdw = beta * self.history[0] - learning_rate * gradW
         vdb = beta * self.history[1] - learning_rate * gradb
         self.weights += vdw
@@ -27,51 +27,43 @@ class DenseLayer(object):
         self.history = (vdw, vdb)
 
     def __call__(self, inputs):
-        h = (self.weights @ inputs.T) + self.bias
-        h = h.T
+        h = (self.weights @ np.swapaxes(inputs, 0, 1)) + self.bias
+        h = np.swapaxes(h, 0, 1)
         return h if self.activation is None else self.activation(h)
 
 
 class NeuralNetwork(object):
-    def __init__(self, n_classes=11, dense_layer_count=1, neural_counts=[128], activations=['relu']):
+    def __init__(self, dense_layer_count=2, neural_counts=(128, 11), activations=('relu', 'softmax')):
         assert dense_layer_count == len(neural_counts)
         assert dense_layer_count == len(activations)
         self.history_outputs = []
-        #self.dense_layer_count = dense_layer_count
         for i in range(dense_layer_count):
-            setattr(self, f'layer_{i}', DenseLayer(neural_counts[i],
-                                                     784 if i == 0 else neural_counts[i-1], activations[i]))
-        self.output = DenseLayer(n_classes, prev_layer_size=neural_counts[-1], activation='softmax')
+            vars(self)[f'layer_{i}'] = DenseLayer(neural_counts[i],
+                                                    784 if i == 0 else neural_counts[i-1], activations[i])
 
     def __call__(self, inputs):
         self.history_outputs = [inputs]
         dense = list(vars(self).keys())[1:]
-        for i in range(len(dense) - 1):
+        for i in range(len(dense)):
             layer = getattr(self, dense[i])
             x = layer(inputs) if i == 0 else layer(x)
             self.history_outputs.append(x)
-        result = self.output(x)
-        return result  #
+        result = self.history_outputs[-1]
+        del self.history_outputs[-1]
+        return result
 
-    def back_propagation(self, y_true, y_pred, batch_size):
-        layers = list(vars(self).keys())[::-1][:-1]
+    def back_propagation(self, y_true, y_pred, batch_size, learning_rate=0.005, beta=0.9):
+        layers = list(vars(self).keys())[:0:-1]
         for i, layer in enumerate(layers):
             if i == 0:
                 dZ = y_pred - y_true
-                #print('dZ', dZ.shape)
             else:
-                #print('else, dz Shape', dZ.shape)
                 weights = getattr(self, layers[i-1]).weights
-                #print('w', weights.shape)
                 activation = getattr(self, layer).activation.__name__
-                print(activation)
                 dZ = (dZ @ weights) * dict_derivatives[activation](self.history_outputs[-i])
-                #print('dZ', dZ.shape)
-            db = (1 / batch_size) * dZ.sum(axis=0).reshape(-1, 1) # (11,)
-            dW = (1 / batch_size) * (dZ.T @ self.history_outputs[-(i+1)])
-            #print(f'dW = {dW.shape}, db = {db.shape}')
-            getattr(self, layers[i]).update_weights_and_history(dW, db)
-
+            db = np.expand_dims((1 / batch_size) * dZ.sum(axis=0), axis=-1)
+            dW = (1 / batch_size) * (np.swapaxes(dZ, 0, 1) @ self.history_outputs[-(i+1)])
+            getattr(self, layers[i]).update_weights_and_history(dW, db, learning_rate, beta)
 
 
 def categorical_cross_entropy(y_true, y_pred):

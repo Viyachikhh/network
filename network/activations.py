@@ -7,7 +7,7 @@ def relu(h):
 
 def softmax(h):
     exp_h = np.exp(h)
-    return exp_h / exp_h.sum(axis=1).reshape(-1, 1)
+    return exp_h / exp_h.sum(axis=1, keepdims=True)
 
 
 def sigmoid(h):
@@ -23,7 +23,16 @@ def derivative_relu(h):
 
 
 def derivative_softmax(h):
-    pass
+    """
+    IN PROGRESS...
+    """
+    softmax_values = softmax(h)
+    result = np.zeros((h.shape[1], h.shape[1]))
+    for i in range(h.shape[1]):
+        for j in range(h.shape[1]):
+            result[i, j] = softmax_values[i] * (1 - softmax_values[i]) if i == j else \
+                softmax_values[i] * softmax_values[j]
+    return result
 
 
 def derivative_sigmoid(h):
