@@ -7,7 +7,7 @@ def relu(h):
 
 def softmax(h):
     exp_h = np.exp(h)
-    return exp_h / exp_h.sum(axis=1, keepdims=True)
+    return exp_h / exp_h.sum(axis=0, keepdims=True)
 
 
 def sigmoid(h):
