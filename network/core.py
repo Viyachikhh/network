@@ -89,7 +89,8 @@ class Conv2DLayer(Layer):
         self.history = (0, 0)
         self.activation = DICT_ACTIVATIONS.get(activation, None)
         self.cache = None
-        self.padding_size = (self.weights.shape[2] // 2, self.weights.shape[3] // 2)
+        self.padding_size = (self.weights.shape[2] // 2 if self.padding else 0,
+                             self.weights.shape[3] // 2 if self.padding else 0)
 
     def __call__(self, inputs):
 
@@ -109,7 +110,9 @@ class Conv2DLayer(Layer):
         X_in_col = im2col_indices(inputs, self.weights.shape[2], self.weights.shape[3],
                                   padding=self.weights.shape[2] // 2, stride=self.stride)
         W_in_col = self.weights.reshape(self.weights.shape[0], -1)
+        #print(X_in_col.shape, W_in_col.shape)
         h = (W_in_col @ X_in_col) + self.bias
+        #print(h.shape)
         height_output = (inputs.shape[2] - self.weights.shape[2] + 2 * self.padding) // self.stride + 1
         width_output = (inputs.shape[3] - self.weights.shape[3] + 2 * self.padding) // self.stride + 1
 
@@ -119,13 +122,13 @@ class Conv2DLayer(Layer):
         result = self.activation(h) if self.activation is not None else h
         self.cache = (inputs, X_in_col, result)
         """
-
         return result
 
     def get_gradients(self, dZ, activation_next=None):
         db = np.sum(dZ, axis=(0, 2, 3))
-        db = np.expand_dims(1 / self.cache[0].shape[0] * db.reshape(self.weights.shape[0], -1), axis=-1)
-        #print(db.shape)
+        # db = (1 / self.cache[0].shape[0]) * db.reshape(self.weights.shape[0], -1)
+        db = np.expand_dims((1 / self.cache[0].shape[0]) * db.reshape(self.weights.shape[0], -1), axis=-1)
+        # print(db.shape)
         """
         dZ_reshaped = dZ.transpose(1, 2, 3, 0).reshape(self.weights.shape[0], -1)
 
@@ -139,13 +142,15 @@ class Conv2DLayer(Layer):
                                  self.weights.shape[3], padding=self.padding, stride=self.stride)
         """
         dW, dZ_next = self.convolution_reverse(dZ)
+
         derivative = DICT_DERIVATIVES.get(activation_next, None)
         derivative_values = derivative(self.cache[0]) if derivative is not None else self.cache[0]
-        #print(dZ_next.shape, derivative_values.shape)
 
-        dZ_next = dZ_next * derivative_values[:, :, self.padding_size[0]: -self.padding_size[0],
-                            self.padding_size[1]: -self.padding_size[1]]
-
+        if self.padding:
+            dZ_next = dZ_next * derivative_values[:, :, self.padding_size[0]: -self.padding_size[0],
+                                self.padding_size[1]: -self.padding_size[1]]
+        else:
+            dZ_next = dZ_next * derivative_values
         return dW, db, dZ_next
 
     def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
@@ -236,7 +241,7 @@ class MaxPoolingLayer(Layer):
 
         X_in_col = im2col_indices(X_reshaped, self.pool_size, self.pool_size, padding=0, stride=self.pool_size)
         self.X_col_size = X_in_col
-
+        #print(X_in_col.shape)
         self.max_indexes = np.argmax(X_in_col, axis=0)
         result = X_in_col[self.max_indexes, range(self.max_indexes.size)]
         result = result.reshape(inputs.shape[2] // self.pool_size, inputs.shape[3] // self.pool_size,
@@ -275,7 +280,7 @@ class FlattenLayer(Layer):
     def get_gradients(self, dZ):
         dZ_next = np.swapaxes(dZ, 0, 1)
         dZ_next = dZ_next.reshape(self.cache[0].shape)
-        #print(dZ_next.shape)
+        # print(dZ_next.shape)
         return dZ_next
 
     def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
