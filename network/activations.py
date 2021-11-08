@@ -7,6 +7,7 @@ def relu(h):
 
 def softmax(h):
     exp_h = np.exp(h)
+    #print('act', exp_h.sum(axis=0, keepdims=True).shape)
     return exp_h / exp_h.sum(axis=0, keepdims=True)
 
 
