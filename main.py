@@ -11,19 +11,19 @@ def make_model():
     """
     Function to make model
     """
-    conv = Conv2DLayer(4, 1, filter_size=3, padding=True, activation='relu')
+    conv = Conv2DLayer(8, 1, filter_size=3, padding=True, activation='relu', stride=1)
     pool = MaxPoolingLayer()
-    conv2 = Conv2DLayer(8, 4, filter_size=3, padding=True, activation='relu')
-    pool2 = MaxPoolingLayer()
+    #conv2 = Conv2DLayer(8, 4, filter_size=3, padding=True, activation='relu')
+    #pool2 = MaxPoolingLayer()
     flatten = FlattenLayer()
-    h_1 = DenseLayer(128, 392, 'relu')
-    h_2 = DenseLayer(64, 128, 'relu')
-    end_network = DenseLayer(11, 64, 'softmax')
-    network = NeuralNetwork([conv, pool, conv2, pool2, flatten, h_1, h_2, end_network])
+    h_1 = DenseLayer(128, 8 * 14 * 14, 'relu')
+    #h_2 = DenseLayer(64, 128, 'relu')
+    end_network = DenseLayer(11, 128, 'softmax')
+    network = NeuralNetwork([conv, pool, flatten, h_1, end_network])
     return network
 
 
-def train_model(model, data, labels, epochs=200, batch_size=32, val=None, learning_rate=0.016, beta=0.9):
+def train_model(model, data, labels, epochs=200, batch_size=32, val=None, learning_rate=0.016/4, beta=0.9):
     train_loss = []
     if val is not None:
         valid_loss = []
@@ -64,4 +64,4 @@ train_errors, valid_errors = train_model(nn, X_train, y_train, batch_size=batch_
 plt.plot(train_errors, label='train')
 plt.plot(valid_errors, label='test')
 plt.legend()
-plt.savefig('graph_conv_with_two_convolutions.png')
+#plt.savefig('graph_without_conv.png')

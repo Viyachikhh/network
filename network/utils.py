@@ -28,12 +28,12 @@ def im2col_indices(x, filter_height, filter_with, padding=0, stride=1):
     x_padded = np.pad(x, ((0, 0), (0, 0), (p, p), (p, p)), mode='constant', constant_values=0)
 
     k, i, j = get_im2col_indices(x.shape, filter_height, filter_with, padding, stride)
-    print(k.shape, i.shape, j.shape, x_padded.shape)
+    #print(k.shape, i.shape, j.shape, x_padded.shape)
     cols = x_padded[:, k, i, j]
-    print(cols.shape)
+    #print(cols.shape)
     C = x.shape[1]
     cols = cols.transpose(1, 2, 0).reshape(filter_height * filter_with * C, -1)
-    print(cols.shape)
+    #print(cols.shape)
     return cols
 
 
@@ -46,7 +46,7 @@ def col2im_indices(cols, x_shape, filter_height, filter_width, padding=0,
     H_padded, W_padded = H + 2 * padding, W + 2 * padding
     x_padded = np.zeros((N, C, H_padded, W_padded), dtype=cols.dtype)
     k, i, j = get_im2col_indices(x_shape, filter_height, filter_width, padding, stride)
-    print(k, i, j)
+    #print(k, i, j)
     cols_reshaped = cols.reshape(C * filter_height * filter_width, -1, N)
     cols_reshaped = cols_reshaped.transpose(2, 0, 1)
     np.add.at(x_padded, (slice(None), k, i, j), cols_reshaped)

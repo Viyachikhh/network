@@ -187,7 +187,7 @@ class Conv2DLayer(Layer):
         # же размера, как и фильтр)
         windows = np.lib.stride_tricks.sliding_window_view(inputs,
                                                            [self.weights.shape[2], self.weights.shape[3]],
-                                                           axis=(-1, -2))  # (batch_size, channels, height, width)
+                                                           axis=(-2, -1))  # (batch_size, channels, height, width)
 
         # вариант реализации свёртки через einsum - перемножение происходит между осями, обозначенные одинаковой буквой,
         # оси, буквы которых не написаны после стрелки - вдоль них происходит суммирование, (m,n) - ширина и высота
@@ -221,8 +221,18 @@ class Conv2DLayer(Layer):
         #  Когда считаем производные весов в свёрточном слое, производная тоже будет свёрткой. Для того, чтобы сделать
         #  аналогичные преобразования, как в функции convolution, используем такую же функцию, используя свёртку на том,
         #  что было на входе, с тем, что поступило на вход back propagation (dZ)
-        windows_res = np.lib.stride_tricks.sliding_window_view(self.cache[0], [dZ.shape[2], dZ.shape[3]],
-                                                               axis=(-1, -2))
+
+        windows_res = np.lib.stride_tricks.sliding_window_view(self.cache[0],
+                                                               [dZ.shape[2], dZ.shape[3]],
+                                                               axis=(-2, -1))
+        """
+        В процессе
+                dZ_strides = np.zeros((dZ.shape[0], dZ.shape[1], dZ.shape[2] * self.stride - (self.stride - 1),
+                                       dZ.shape[3] * self.stride - (self.stride - 1)))
+                dZ_strides[:, :, ::self.stride, ::self.stride] = dZ
+
+                #dZ_strides = np.pad(dZ_strides, ((0, 0), (0, 0), (0, 1), (0, 1)), 'constant', constant_values=0)
+                """
         # аналогично перемножаем нужные оси, чтобы получить производную весов
         dW = np.einsum('ijklmn, iomn -> ojkl', windows_res, dZ)
         dW *= (1 / self.cache[0].shape[0])
@@ -244,7 +254,8 @@ class Conv2DLayer(Layer):
         # аналогичным образом, разбиваем на окна для нормальной возможности умножения
         dZ_windows = np.lib.stride_tricks.sliding_window_view(padded, [padded.shape[2] - self.weights.shape[2] + 1,
                                                                        padded.shape[3] - self.weights.shape[3] + 1],
-                                                              axis=(-1, -2))
+                                                              axis=(-2, -1))
+
         # расчёт производной dZ для следующего слоя в back propagation
         dZ_next = np.einsum('ijklmn, jokl -> iomn', dZ_windows, weights_flipped)
         return dW, dZ_next
