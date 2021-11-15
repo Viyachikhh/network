@@ -11,12 +11,12 @@ def make_model():
     """
     Function to make model
     """
-    conv = Conv2DLayer(4, 1, filter_size=3, padding=False, activation='relu', stride=2)
+    conv = Conv2DLayer(8, 1, filter_size=3, padding=True, activation='relu', stride=1)
     pool = MaxPoolingLayer()
-    conv2 = Conv2DLayer(8, 4, filter_size=3, padding=True, activation='relu', stride=2)
+    conv2 = Conv2DLayer(16, 4, filter_size=3, padding=True, activation='relu', stride=1)
     pool2 = MaxPoolingLayer()
     flatten = FlattenLayer()
-    h_1 = DenseLayer(128, 64, 'relu')
+    h_1 = DenseLayer(128, 1568, 'relu')
     end_network = DenseLayer(11, 128, 'softmax')
     network = NeuralNetwork([conv, pool, flatten, h_1, end_network])
     return network
@@ -52,7 +52,7 @@ X_train, y_train, X_val, y_val = load(reshape=False)
 
 
 epochs = 200
-batch_size = 1024
+batch_size = 512
 
 
 nn = make_model()
@@ -63,4 +63,4 @@ train_errors, valid_errors = train_model(nn, X_train, y_train, batch_size=batch_
 plt.plot(train_errors, label='train')
 plt.plot(valid_errors, label='test')
 plt.legend()
-#plt.savefig('2conv_2pol_dense.png')
+plt.savefig('graph_best.png')

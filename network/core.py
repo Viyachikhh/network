@@ -2,7 +2,7 @@ import numpy as np
 
 from network.activations import *
 from abc import ABC, abstractmethod
-from network.utils import col2im_indices, im2col_indices
+from network.utils import col2im_indices, im2col_indices, getWindows
 
 DICT_ACTIVATIONS = {'tanh': tanh, 'sigmoid': sigmoid, 'relu': relu, 'softmax': softmax}
 DICT_DERIVATIVES = {'tanh': derivative_tanh, 'sigmoid': derivative_sigmoid,
@@ -83,7 +83,7 @@ class Conv2DLayer(Layer):
         self.weights = np.random.uniform(low=-np.sqrt(6 / (1 + count_filters * inp_channels * filter_size ** 2)),
                                          high=np.sqrt(6 / (1 + count_filters * inp_channels * filter_size ** 2)),
                                          size=(count_filters, inp_channels, filter_size, filter_size))
-        self.bias = np.zeros((count_filters, 1, 1))
+        self.bias = np.zeros(count_filters)
         self.padding = padding
         self.stride = stride
         self.history = (0, 0)
@@ -94,36 +94,34 @@ class Conv2DLayer(Layer):
 
     def __call__(self, inputs):
 
-        if self.padding:  # заполнение нулями
-            filling = ((0, 0),
-                       (0, 0),
-                       (self.padding_size[0], self.padding_size[0]),
-                       (self.padding_size[1], self.padding_size[1]))
-            pad_mass = np.pad(inputs, filling, 'constant', constant_values=0)
-        else:
-            pad_mass = inputs
+        height_output = (inputs.shape[2] - self.weights.shape[2] + 2 * self.padding_size[0]) // self.stride + 1
+        width_output = (inputs.shape[3] - self.weights.shape[3] + 2 * self.padding_size[0]) // self.stride + 1
 
-        h = self.convolution(pad_mass) + self.bias
-        self.cache = (pad_mass, inputs.shape, h)
-        result = h if self.activation is None else self.activation(h)
+        # размер массива - (batch_size, in_channels, height_picture, width_picture, filter_height, filter_width)
+        windows = getWindows(inputs, (inputs.shape[0], self.weights.shape[0], height_output, width_output),
+                             filter_size=self.weights.shape[2], padding=self.padding_size[0], stride=self.stride)
 
+        Z = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)  # свёртка входных данных с фильтром
+        Z += self.bias[None, :, None, None]
+        self.cache = (windows, inputs)
+        result = Z if self.activation is None else self.activation(Z)
         return result
 
     def get_gradients(self, dZ, activation_next=None):
-        db = np.sum(dZ, axis=(0, 2, 3))
-        db = np.expand_dims((1 / self.cache[0].shape[0]) * db.reshape(self.weights.shape[0], -1), axis=-1)
+        padding = self.weights.shape[2] - 1 if not self.padding else self.padding_size[0]
+        input_windows, inputs = self.cache
+        windows_dZ = getWindows(dZ, inputs.shape, filter_size=self.weights.shape[2], padding=padding, stride=1,
+                                dilate=self.stride - 1)  # dilate отвечает за количество нулей между элементами, если
+                                                         # stride != 1
+        weights_flipped = self.weights[:, :, ::-1, ::-1]  # для вычисления производной по входным нужно повернуть фильтр
 
-        dW, dZ_next = self.convolution_reverse(dZ)  # производные
-
+        dW = np.einsum('ijklmn, iokl -> ojmn', input_windows, dZ)  # свёртка входных данных и dZ
+        dZ_prev = np.einsum('ijklmn, jomn -> iokl', windows_dZ, weights_flipped)  # полная свёртка dZ и весов
         derivative = DICT_DERIVATIVES.get(activation_next, None)
-        derivative_values = derivative(self.cache[0]) if derivative is not None else self.cache[0]
-
-        if self.padding:  # если мы заполняли нулями, берём срез, иначе в последних двух размерностях будут нули
-            dZ_next = dZ_next * derivative_values[:, :, self.padding_size[0]: -self.padding_size[0],
-                                self.padding_size[1]: -self.padding_size[1]]
-        else:
-            dZ_next = dZ_next * derivative_values
-        return dW, db, dZ_next
+        derivative_values = derivative(inputs) if derivative is not None else np.ones(inputs.shape)
+        dZ_prev *= derivative_values
+        db = np.sum(dZ, axis=(0, 2, 3))
+        return dW, db, dZ_prev
 
     def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
         """
@@ -136,65 +134,6 @@ class Conv2DLayer(Layer):
         self.bias += vdb
         self.history = (vdw, vdb)
         return gradZ
-
-    def convolution(self, inputs):
-        # функция, разбивающая 4-хмерный массив на окна, делая его шестимерным, количество окон вдоль одной картинки -
-        # кол-во каналов * (ширина картинки - ширина фильтра + 1) * (высота картинки - высота фильтра + 1), окна такого
-        # же размера, как и фильтр)
-        windows = np.lib.stride_tricks.sliding_window_view(inputs,
-                                                           [self.weights.shape[2], self.weights.shape[3]],
-                                                           axis=(-2, -1))[:, :, ::self.stride, ::self.stride, :, :]
-        # (batch_size, channels, height, width)
-
-        # вариант реализации свёртки через einsum - перемножение происходит между осями, обозначенные одинаковой буквой,
-        # оси, буквы которых не написаны после стрелки - вдоль них происходит суммирование, (m,n) - ширина и высота
-        # фильтра. Собственно, для этого я и разбивал на окна с помощью функции выше. Ну, и чтобы не двигаться в цикле
-        # по массиву, а сразу перемножать.
-        result = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)
-        return result
-
-    def convolution_reverse(self, dZ):
-        #  Когда считаем производные весов в свёрточном слое, производная тоже будет свёрткой. Для того, чтобы сделать
-        #  аналогичные преобразования, как в функции convolution, используем такую же функцию, используя свёртку на том,
-        #  что было на входе, с тем, что поступило на вход back propagation (dZ)
-
-        dZ_stride = np.zeros((dZ.shape[0], dZ.shape[1],
-                              dZ.shape[2] * self.stride,
-                              dZ.shape[3] * self.stride))
-
-        dZ_stride[:, :, ::self.stride, ::self.stride] = dZ
-        windows_res = np.lib.stride_tricks.sliding_window_view(self.cache[0],
-                                                               [dZ_stride.shape[2], dZ_stride.shape[3]],
-                                                               axis=(-2, -1))
-
-        # аналогично перемножаем нужные оси, чтобы получить производную весов
-        print(windows_res.shape, dZ_stride.shape)
-        dW = np.einsum('ijklmn, iomn -> ojkl', windows_res, dZ_stride)
-        dW *= (1 / self.cache[0].shape[0])
-
-        dZ_padding = self.weights.shape[2] // 2
-
-        weights_flipped = self.weights[:, :, ::-1, ::-1]
-        # производная по тому, что было на входе - полная свёртка dZ и фильтра, который повернули на 180 градусов
-
-        if self.padding:  # если мы заполняли нулями на входе
-            # ещё раз, чтобы не потерять размерности
-            filling = ((0, 0), (0, 0), (dZ_padding, dZ_padding), (dZ_padding, dZ_padding))
-        else:
-            # иначе, придётся заполнять два раза
-            filling = ((0, 0), (0, 0), (2 * dZ_padding, 2 * dZ_padding), (2 * dZ_padding, 2 * dZ_padding))
-
-        padded = np.pad(dZ_stride, filling, 'constant', constant_values=0)
-
-        # аналогичным образом, разбиваем на окна для нормальной возможности умножения
-        dZ_windows = np.lib.stride_tricks.sliding_window_view(padded, [padded.shape[2] - self.weights.shape[2] + 1,
-                                                                       padded.shape[3] - self.weights.shape[3] + 1],
-                                                              axis=(-2, -1))
-
-        # расчёт производной dZ для следующего слоя в back propagation
-        dZ_next = np.einsum('ijklmn, jokl -> iomn', dZ_windows, weights_flipped)
-        #assert dZ_next.shape == self.cache[1], f'{dZ_next.shape}, {self.cache[1]}'
-        return dW, dZ_next
 
     def __str__(self):
         return 'Conv_layer'
