@@ -104,46 +104,15 @@ class Conv2DLayer(Layer):
             pad_mass = inputs
 
         h = self.convolution(pad_mass) + self.bias
-        self.cache = (pad_mass, h)
+        self.cache = (pad_mass, inputs.shape, h)
         result = h if self.activation is None else self.activation(h)
-        """
-        
-        Это реализация с превращением четырёхмерного в двумерный, для того, чтобы операцию свёртки
-        свести к перемножению матриц аналогичным образом, как в полносвязном слое
-        
-        X_in_col = im2col_indices(inputs, self.weights.shape[2], self.weights.shape[3],
-                                  padding=self.weights.shape[2] // 2, stride=self.stride)  
-        W_in_col = self.weights.reshape(self.weights.shape[0], -1)
-        #print(X_in_col.shape, W_in_col.shape)
-        h = (W_in_col @ X_in_col) + self.bias
-        #print(h.shape)
-        height_output = (inputs.shape[2] - self.weights.shape[2] + 2 * self.padding) // self.stride + 1
-        width_output = (inputs.shape[3] - self.weights.shape[3] + 2 * self.padding) // self.stride + 1
 
-        h = h.reshape(self.weights.shape[0], height_output, width_output, inputs.shape[0])
-        h = h.transpose(3, 0, 1, 2)  # преобразования, чтобы получить правильную размерность
-
-        result = self.activation(h) if self.activation is not None else h
-        self.cache = (inputs, X_in_col, result)
-        """
         return result
 
     def get_gradients(self, dZ, activation_next=None):
         db = np.sum(dZ, axis=(0, 2, 3))
         db = np.expand_dims((1 / self.cache[0].shape[0]) * db.reshape(self.weights.shape[0], -1), axis=-1)
-        """
-        Здесь происходит расчёт похожим образом, как в полносвязном слое
-        dZ_reshaped = dZ.transpose(1, 2, 3, 0).reshape(self.weights.shape[0], -1)
 
-        dW = (1 / self.cache[0].shape[0]) * dZ_reshaped @ self.cache[1].T  # расчёт производной для весов
-        dW = dW.reshape(self.weights.shape)
-
-        W_reshaped = self.weights.reshape(self.weights.shape[0], -1)
-
-        dZ_next_col = W_reshaped.T @ dZ_reshaped  расчёт производной для входных данных
-        dZ_next = col2im_indices(dZ_next_col, self.cache[0].shape, self.weights.shape[2],
-                                 self.weights.shape[3], padding=self.padding, stride=self.stride)
-        """
         dW, dZ_next = self.convolution_reverse(dZ)  # производные
 
         derivative = DICT_DERIVATIVES.get(activation_next, None)
@@ -169,25 +138,13 @@ class Conv2DLayer(Layer):
         return gradZ
 
     def convolution(self, inputs):
-        """
-        height_filter = self.weights.shape[0] // 2
-        width_filter = self.weights.shape[1] // 2
-        result = np.zeros((inputs.shape[0], inputs.shape[1] - self.weights.shape[0] + 1,
-                           inputs.shape[2] - self.weights.shape[1] + 1, self.weights.shape[-1]))
-        for i in range(height_filter, inputs.shape[1] - height_filter):
-            for j in range(width_filter, inputs.shape[2] - width_filter):
-                box = inputs[:, i - height_filter: i + 1 + height_filter, j - width_filter: j + 1 + width_filter]
-                output = np.expand_dims(np.einsum('ijkl, jkmh -> ih', box, self.weights), axis=(0, 1))
-                result[:, i - height_filter, j - width_filter, :] = output
-        print('conv_res', result.shape)
-        return result
-        """
         # функция, разбивающая 4-хмерный массив на окна, делая его шестимерным, количество окон вдоль одной картинки -
-        # кол-во канало * (ширина картинки - ширина фильтра + 1) * (высота картинки - высота фильтра + 1), окна такого
+        # кол-во каналов * (ширина картинки - ширина фильтра + 1) * (высота картинки - высота фильтра + 1), окна такого
         # же размера, как и фильтр)
         windows = np.lib.stride_tricks.sliding_window_view(inputs,
                                                            [self.weights.shape[2], self.weights.shape[3]],
-                                                           axis=(-2, -1))  # (batch_size, channels, height, width)
+                                                           axis=(-2, -1))[:, :, ::self.stride, ::self.stride, :, :]
+        # (batch_size, channels, height, width)
 
         # вариант реализации свёртки через einsum - перемножение происходит между осями, обозначенные одинаковой буквой,
         # оси, буквы которых не написаны после стрелки - вдоль них происходит суммирование, (m,n) - ширина и высота
@@ -197,44 +154,22 @@ class Conv2DLayer(Layer):
         return result
 
     def convolution_reverse(self, dZ):
-        """
-        dW = np.zeros(self.weights.shape)
-        for i in range(dW.shape[0]):  # расчёт производных для весов
-            for j in range(dW.shape[1]):
-                box = self.cache[0][:, i:i + self.cache[1].shape[1],
-                      j:j + self.cache[1].shape[2], :]
-                output = np.einsum('ijkl, ijkh -> ilh', box, dZ)
-                dW[i, j, :, :] = output.mean(axis=0)
-        dZ_next = np.zeros(self.cache[0].shape)
-        print(dW.shape)
-        height = self.weights.shape[0] // 2
-        width = self.weights.shape[1] // 2
-        filling = ((0, 0), (height, height), (width, width), (0, 0))
-        padded = np.pad(dZ, filling, 'constant', constant_values=0)
-        for i in range(height, padded.shape[1] - height, self.stride):
-            for j in range(width, padded.shape[2] - width, self.stride):
-                slice_dZ = dZ[:, i - height: i + height + 1, j - width: j + 1 + width, :]
-                output = np.einsum('ijkl, mnop -> mijk', self.weights, slice_dZ)
-                dZ_next[:, i - height: i + height + 1, j - width: j + 1 + width, :] += output
-        return dW, dZ_next
-        """
         #  Когда считаем производные весов в свёрточном слое, производная тоже будет свёрткой. Для того, чтобы сделать
         #  аналогичные преобразования, как в функции convolution, используем такую же функцию, используя свёртку на том,
         #  что было на входе, с тем, что поступило на вход back propagation (dZ)
 
-        windows_res = np.lib.stride_tricks.sliding_window_view(self.cache[0],
-                                                               [dZ.shape[2], dZ.shape[3]],
-                                                               axis=(-2, -1))
-        """
-        В процессе
-                dZ_strides = np.zeros((dZ.shape[0], dZ.shape[1], dZ.shape[2] * self.stride - (self.stride - 1),
-                                       dZ.shape[3] * self.stride - (self.stride - 1)))
-                dZ_strides[:, :, ::self.stride, ::self.stride] = dZ
+        dZ_stride = np.zeros((dZ.shape[0], dZ.shape[1],
+                              dZ.shape[2] * self.stride,
+                              dZ.shape[3] * self.stride))
 
-                #dZ_strides = np.pad(dZ_strides, ((0, 0), (0, 0), (0, 1), (0, 1)), 'constant', constant_values=0)
-                """
+        dZ_stride[:, :, ::self.stride, ::self.stride] = dZ
+        windows_res = np.lib.stride_tricks.sliding_window_view(self.cache[0],
+                                                               [dZ_stride.shape[2], dZ_stride.shape[3]],
+                                                               axis=(-2, -1))
+
         # аналогично перемножаем нужные оси, чтобы получить производную весов
-        dW = np.einsum('ijklmn, iomn -> ojkl', windows_res, dZ)
+        print(windows_res.shape, dZ_stride.shape)
+        dW = np.einsum('ijklmn, iomn -> ojkl', windows_res, dZ_stride)
         dW *= (1 / self.cache[0].shape[0])
 
         dZ_padding = self.weights.shape[2] // 2
@@ -249,7 +184,7 @@ class Conv2DLayer(Layer):
             # иначе, придётся заполнять два раза
             filling = ((0, 0), (0, 0), (2 * dZ_padding, 2 * dZ_padding), (2 * dZ_padding, 2 * dZ_padding))
 
-        padded = np.pad(dZ, filling, 'constant', constant_values=0)
+        padded = np.pad(dZ_stride, filling, 'constant', constant_values=0)
 
         # аналогичным образом, разбиваем на окна для нормальной возможности умножения
         dZ_windows = np.lib.stride_tricks.sliding_window_view(padded, [padded.shape[2] - self.weights.shape[2] + 1,
@@ -258,6 +193,7 @@ class Conv2DLayer(Layer):
 
         # расчёт производной dZ для следующего слоя в back propagation
         dZ_next = np.einsum('ijklmn, jokl -> iomn', dZ_windows, weights_flipped)
+        #assert dZ_next.shape == self.cache[1], f'{dZ_next.shape}, {self.cache[1]}'
         return dW, dZ_next
 
     def __str__(self):
