@@ -12,15 +12,16 @@ def make_model():
     """
     Function to make model
     """
-    conv = Conv2DLayer(8, filter_size=3, padding=True, activation='relu', stride=1)
+    conv = Conv2DLayer(4, filter_size=3, padding=True, activation='relu', stride=1)
     pool = MaxPoolingLayer()
-    conv2 = Conv2DLayer(16, filter_size=5, padding=True, activation='relu', stride=2)
+    conv2 = Conv2DLayer(8, filter_size=3, padding=True, activation='relu', stride=1)
     pool2 = MaxPoolingLayer()
     flatten = FlattenLayer()
     h_1 = DenseLayer(128, 'relu')
     end_network = DenseLayer(11, 'softmax')
     network = NeuralNetwork(conv, pool, flatten)
     network.add_layer(h_1, end_network)
+    network.optimizer = NAG(beta=0.905, learning_rate=0.006)
     #network.optimizer
     return network
 

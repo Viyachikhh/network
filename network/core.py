@@ -58,8 +58,7 @@ class DenseLayer(Layer):
 
     def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw = optimizer.beta * self.history[0] - optimizer.learning_rate * gradW
-        vdb = optimizer.beta * self.history[1] - optimizer.learning_rate * gradb
+        vdw, vdb = optimizer.apply_gradients([(self.history[0], gradW), (self.history[1], gradb)])
         self.weights += vdw
         self.bias += vdb
         self.history = (vdw, vdb)
@@ -150,8 +149,7 @@ class Conv2DLayer(Layer):
         Собственно, обновление весов
         """
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw = optimizer.beta * self.history[0] - optimizer.learning_rate * gradW
-        vdb = optimizer.beta * self.history[1] - optimizer.learning_rate * gradb
+        vdw, vdb = optimizer.apply_gradients([(self.history[0], gradW), (self.history[1], gradb)])
         self.weights += vdw
         self.bias += vdb
         self.history = (vdw, vdb)
