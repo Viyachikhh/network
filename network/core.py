@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 
 from network.utils import col2im_indices, im2col_indices, getWindows, xavier_uniform_generator
 from network.initializers import XavierWeights
+from network.optimizers import NAG
 
 DICT_ACTIVATIONS = {'tanh': tanh, 'sigmoid': sigmoid, 'relu': relu, 'softmax': softmax}
 DICT_DERIVATIVES = {'tanh': derivative_tanh, 'sigmoid': derivative_sigmoid,
@@ -29,7 +30,7 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         pass
 
     @abstractmethod
@@ -50,14 +51,15 @@ class DenseLayer(Layer):
         self.history = (0, 0)
         self.activation = DICT_ACTIVATIONS.get(activation, None)
         self.cache = None
+        self.update_parameters = 2
 
     def build_weights(self, prev_size):
         return self.weights_initializer(prev_size, self.layer_size, (self.layer_size, prev_size))
 
-    def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw = beta * self.history[0] - learning_rate * gradW
-        vdb = beta * self.history[1] - learning_rate * gradb
+        vdw = optimizer.beta * self.history[0] - optimizer.learning_rate * gradW
+        vdb = optimizer.beta * self.history[1] - optimizer.learning_rate * gradb
         self.weights += vdw
         self.bias += vdb
         self.history = (vdw, vdb)
@@ -101,9 +103,11 @@ class Conv2DLayer(Layer):
         self.activation = DICT_ACTIVATIONS.get(activation, None)
         self.cache = None
 
+        self.update_parameters = 2
+
     def build_weights(self, prev_size):
         return self.weights_initializer(prev_size, self.count_filters * prev_size * self.filter_size ** 2,
-                                      (self.count_filters, prev_size, self.filter_size, self.filter_size))
+                                        (self.count_filters, prev_size, self.filter_size, self.filter_size))
 
     def __call__(self, inputs):
         if 'weights' not in vars(self).keys():
@@ -141,13 +145,13 @@ class Conv2DLayer(Layer):
         db = np.sum(dZ, axis=(0, 2, 3))
         return dW, db, dZ_prev
 
-    def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         """
         Собственно, обновление весов
         """
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw = beta * self.history[0] - learning_rate * gradW
-        vdb = beta * self.history[1] - learning_rate * gradb
+        vdw = optimizer.beta * self.history[0] - optimizer.learning_rate * gradW
+        vdb = optimizer.beta * self.history[1] - optimizer.learning_rate * gradb
         self.weights += vdw
         self.bias += vdb
         self.history = (vdw, vdb)
@@ -163,6 +167,8 @@ class MaxPoolingLayer(Layer):
         self.input_channels = input_channels
         self.pool_size = pool_size
         self.cache = None
+
+        self.update_parameters = 0
 
     def __call__(self, inputs):
         X_reshaped = inputs.reshape(inputs.shape[0] * inputs.shape[1], 1, inputs.shape[2], inputs.shape[3])
@@ -182,7 +188,7 @@ class MaxPoolingLayer(Layer):
 
         return result
 
-    def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -214,12 +220,14 @@ class FlattenLayer(Layer):
     def __init__(self):
         self.cache = None
 
+        self.update_parameters = 0
+
     def get_gradients(self, dZ):
         dZ_next = np.swapaxes(dZ, 0, 1)
         dZ_next = dZ_next.reshape(self.cache[0].shape)
         return dZ_next
 
-    def update_weights_and_history(self, dZ, learning_rate, beta, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -240,34 +248,37 @@ class FlattenLayer(Layer):
 class NeuralNetwork(object):
     def __init__(self, *your_layers):
 
+        self.layers_list = []
+        count_parameters_to_update = []
         for i in range(len(your_layers)):
-            vars(self)[f'layer_{i}'] = your_layers[i]
+            self.layers_list.append(your_layers[i])
+            count_parameters_to_update.append(getattr(your_layers[i], 'update_parameters'))
+
+        self.optimizer = NAG(learning_rate=0.004, beta=0.9)
 
     def __call__(self, inputs):
-        layers = list(vars(self).keys())
-        for i in range(len(layers)):
-            layer = getattr(self, layers[i])
+        for i in range(len(self.layers_list)):
+            layer = self.layers_list[i]
             x = layer(inputs) if i == 0 else layer(x)
         return x
 
-    def back_propagation(self, y_true, y_pred, learning_rate=0.005, beta=0.9):
-        layers = list(vars(self).keys())[::-1]
+    def back_propagation(self, y_true, y_pred):
+        layers = self.layers_list[::-1]
 
         dZ = y_pred - y_true
         for i, layer in enumerate(layers):
             if i != len(layers) - 1:
                 try:
-                    activation = REV_ACTIVATIONS.get(getattr(self, layers[i + 1]).activation, None)
+                    activation = REV_ACTIVATIONS.get(layers[i + 1].activation, None)
                 except AttributeError:  # на случай, если в слое не предусмотрена функция активации
                     activation = None
             else:
                 activation = None
-            dZ = getattr(self, layers[i]).update_weights_and_history(dZ, learning_rate, beta, activation)
+            dZ = layers[i].update_weights_and_history(dZ, self.optimizer, activation)
 
     def add_layer(self, *layers):
-        count = len(vars(self))
         for i in range(len(layers)):
-            vars(self)[f'layers {count + i}'] = layers[i]
+            self.layers_list.append(layers[i])
 
 
 def categorical_cross_entropy(y_true, y_pred):

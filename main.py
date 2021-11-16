@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 from timeit import default_timer
 
 from network.core import categorical_cross_entropy, NeuralNetwork, DenseLayer, Conv2DLayer, FlattenLayer, MaxPoolingLayer
+from network.optimizers import NAG
 from network.load import load
 
 
@@ -20,6 +21,7 @@ def make_model():
     end_network = DenseLayer(11, 'softmax')
     network = NeuralNetwork(conv, pool, flatten)
     network.add_layer(h_1, end_network)
+    #network.optimizer
     return network
 
 
@@ -38,8 +40,7 @@ def train_model(model, data, labels, count_epochs=200, size_of_batch=32, val=Non
         pred = model(X_train[rand_int:rand_int + size_of_batch])  # генерирование предсказаний
         print(f'time = {default_timer() - start}')  # сколько времени занимала одна эпоха обучения
         loss = categorical_cross_entropy(y_train[rand_int:rand_int + size_of_batch].T, pred)
-        model.back_propagation(y_train[rand_int:rand_int + size_of_batch].T, pred, learning_rate=learning_rate,
-                               beta=beta)
+        model.back_propagation(y_train[rand_int:rand_int + size_of_batch].T, pred)
         print(f'loss = {loss}', end=', ')
         train_loss.append(loss)
         if val is not None:  # на валидационной
