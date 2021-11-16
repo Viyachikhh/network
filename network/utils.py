@@ -77,3 +77,9 @@ def getWindows(input_, output_size, filter_size, padding=0, stride=1, dilate=0):
         strides=(batch_stride, channel_stride, stride * filter_height_stride, stride * filter_width_stride,
                  filter_height_stride, filter_width_stride))
     # кол-во байт по размерностям, для получения нужного многомерного массива с учётом сдвига
+
+
+def xavier_uniform_generator(prev_shape, shape, sizes_weights):
+    return np.random.uniform(low=-np.sqrt(6 / (prev_shape + shape)),
+                             high=np.sqrt(6 / (prev_shape + shape)),
+                             size=sizes_weights)
