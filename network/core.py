@@ -1,9 +1,12 @@
-from network.activations import *
 from abc import ABC, abstractmethod
+from collections import OrderedDict
+from timeit import default_timer
 
-from network.utils import col2im_indices, im2col_indices, getWindows, xavier_uniform_generator
+
+from network.activations import *
+from network.utils import col2im_indices, im2col_indices, getWindows
 from network.initializers import XavierWeights
-from network.optimizers import NAG
+from network.optimizers import Momentum
 
 DICT_ACTIVATIONS = {'tanh': tanh, 'sigmoid': sigmoid, 'relu': relu, 'softmax': softmax}
 DICT_DERIVATIVES = {'tanh': derivative_tanh, 'sigmoid': derivative_sigmoid,
@@ -30,7 +33,7 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
         pass
 
     @abstractmethod
@@ -48,20 +51,17 @@ class DenseLayer(Layer):
         self.prev_layer_size = None
         self.weights_initializer = XavierWeights()
         self.bias = np.zeros((self.layer_size, 1))
-        self.history = (0, 0)
         self.activation = DICT_ACTIVATIONS.get(activation, None)
         self.cache = None
-        self.update_parameters = 2
 
     def build_weights(self, prev_size):
         return self.weights_initializer(prev_size, self.layer_size, (self.layer_size, prev_size))
 
-    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw, vdb = optimizer.apply_gradients([(self.history[0], gradW), (self.history[1], gradb)])
-        self.weights += vdw
-        self.bias += vdb
-        self.history = (vdw, vdb)
+        parameters = optimizer.apply_gradients(layer_string_name, {'gradW': gradW, 'gradb': gradb})
+        self.weights += parameters['gradW']
+        self.bias += parameters['gradb']
         return gradZ
 
     def get_gradients(self, dZ, activation_next=None):
@@ -98,11 +98,8 @@ class Conv2DLayer(Layer):
         self.padding = padding
         self.stride = stride
 
-        self.history = (0, 0)
         self.activation = DICT_ACTIVATIONS.get(activation, None)
         self.cache = None
-
-        self.update_parameters = 2
 
     def build_weights(self, prev_size):
         return self.weights_initializer(prev_size, self.count_filters * prev_size * self.filter_size ** 2,
@@ -144,15 +141,14 @@ class Conv2DLayer(Layer):
         db = np.sum(dZ, axis=(0, 2, 3))
         return dW, db, dZ_prev
 
-    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
         """
         Собственно, обновление весов
         """
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        vdw, vdb = optimizer.apply_gradients([(self.history[0], gradW), (self.history[1], gradb)])
-        self.weights += vdw
-        self.bias += vdb
-        self.history = (vdw, vdb)
+        parameters = optimizer.apply_gradients(layer_string_name, {'gradW': gradW, 'gradb': gradb})
+        self.weights += parameters['gradW']
+        self.bias += parameters['gradb']
         return gradZ
 
     def __str__(self):
@@ -165,8 +161,6 @@ class MaxPoolingLayer(Layer):
         self.input_channels = input_channels
         self.pool_size = pool_size
         self.cache = None
-
-        self.update_parameters = 0
 
     def __call__(self, inputs):
         X_reshaped = inputs.reshape(inputs.shape[0] * inputs.shape[1], 1, inputs.shape[2], inputs.shape[3])
@@ -186,7 +180,7 @@ class MaxPoolingLayer(Layer):
 
         return result
 
-    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -218,14 +212,12 @@ class FlattenLayer(Layer):
     def __init__(self):
         self.cache = None
 
-        self.update_parameters = 0
-
     def get_gradients(self, dZ):
         dZ_next = np.swapaxes(dZ, 0, 1)
         dZ_next = dZ_next.reshape(self.cache[0].shape)
         return dZ_next
 
-    def update_weights_and_history(self, dZ, optimizer, activation_next=None):
+    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -246,37 +238,62 @@ class FlattenLayer(Layer):
 class NeuralNetwork(object):
     def __init__(self, *your_layers):
 
-        self.layers_list = []
-        count_parameters_to_update = []
+        self.layers_dict = OrderedDict()
         for i in range(len(your_layers)):
-            self.layers_list.append(your_layers[i])
-            count_parameters_to_update.append(getattr(your_layers[i], 'update_parameters'))
+            self.layers_dict[f'layer_{i}'] = your_layers[i]
 
-        self.optimizer = NAG(learning_rate=0.004, beta=0.9)
+        self.optimizer = Momentum(learning_rate=0.004, beta=0.9, nesterov=True)
 
     def __call__(self, inputs):
-        for i in range(len(self.layers_list)):
-            layer = self.layers_list[i]
+        for i in range(len(self.layers_dict)):
+            layer = self.layers_dict[f'layer_{i}']
             x = layer(inputs) if i == 0 else layer(x)
         return x
 
     def back_propagation(self, y_true, y_pred):
-        layers = self.layers_list[::-1]
-
+        layers = list(self.layers_dict.keys())[::-1]
         dZ = y_pred - y_true
         for i, layer in enumerate(layers):
             if i != len(layers) - 1:
                 try:
-                    activation = REV_ACTIVATIONS.get(layers[i + 1].activation, None)
+                    activation = REV_ACTIVATIONS.get(self.layers_dict[layers[i + 1]].activation, None)
                 except AttributeError:  # на случай, если в слое не предусмотрена функция активации
                     activation = None
             else:
                 activation = None
-            dZ = layers[i].update_weights_and_history(dZ, self.optimizer, activation)
+            dZ = self.layers_dict[layers[i]].update_weights_and_history(dZ=dZ, optimizer=self.optimizer,
+                                                                        activation_next=activation,
+                                                                        layer_string_name=f'layer_{i}')
 
     def add_layer(self, *layers):
+        cur_length = len(self.layers_dict)
         for i in range(len(layers)):
-            self.layers_list.append(layers[i])
+            self.layers_dict[f'layer_{i + cur_length}'] = layers[i]
+
+    def fit(self, data, labels, count_epochs=200, size_of_batch=32, val=None):
+        train_loss = []
+        if val is not None:
+            valid_loss = []
+        ind = np.arange(data.shape[0])
+        for epoch in range(count_epochs):
+            np.random.shuffle(ind)  # перемешивание данных
+            data = data[ind]
+            labels = labels[ind]
+            print(f'epoch {epoch + 1}')
+            rand_int = np.random.randint(0, data.shape[0] - size_of_batch + 1)
+            start = default_timer()
+            pred = self(data[rand_int:rand_int + size_of_batch])  # генерирование предсказаний
+            print(f'time = {default_timer() - start}')  # сколько времени занимала одна эпоха обучения
+            loss = categorical_cross_entropy(labels[rand_int:rand_int + size_of_batch].T, pred)
+            self.back_propagation(labels[rand_int:rand_int + size_of_batch].T, pred)
+            print(f'loss = {loss}', end=', ')
+            train_loss.append(loss)
+            if val is not None:  # на валидационной
+                val_pred = self(val[0])
+                val_loss = categorical_cross_entropy(val[1].T, val_pred)
+                valid_loss.append(val_loss)
+                print(f'validation loss = {val_loss}')
+        return train_loss, valid_loss if val is not None else train_loss
 
 
 def categorical_cross_entropy(y_true, y_pred):

@@ -1,61 +1,83 @@
+import numpy as np
 
 
-from abc import ABC, abstractmethod
-
-
-class BaseOptimizer(ABC):
+class BaseOptimizer(object):
     """
     Входные данные для оптимизатора - список кортежей, состоящих из истории и градиента параметра.
     Если мы не используем исторрию (оптимизационный алгоритм не предполагает использование истории) - передаём None.
     """
-    def __init__(self):
-        pass
 
-
-class NAG(BaseOptimizer):
-
-    def __init__(self, beta, learning_rate):
-        super().__init__()
-        self.beta = beta
+    def __init__(self, learning_rate):
         self.learning_rate = learning_rate
 
-    def apply_gradients(self, parameters):
-        """
-        :parameter: список кортежей вида (параметр, градиент)
-        """
+    def apply_gradients(self, layer_name, parameters):
         res = []
         for i in range(len(parameters)):
-            velocity = self.beta * parameters[i][0] - self.learning_rate * parameters[i][1]
-            vd_param = self.beta * velocity - self.learning_rate * parameters[i][1]
-            res.append(vd_param)
+            value = -parameters[i]
+            res.append(value)
         return res
 
 
 class Momentum(BaseOptimizer):
 
-    def __init__(self, beta, learning_rate):
-        super().__init__()
+    def __init__(self, beta, learning_rate, nesterov=True):
+        super().__init__(learning_rate)
         self.beta = beta
-        self.learning_rate = learning_rate
+        self.velocity_parameters = {}
+        self.nesterov = nesterov
 
-    def apply_gradients(self, parameters):
+    def apply_gradients(self, layer_name, parameters):
         """
-        :parameter: список кортежей вида (параметр, градиент)
+        :parameter: список градиентов параметров
         """
-        res = []
-        for i in range(len(parameters)):
-            vd_param = self.beta * parameters[i][0] - self.learning_rate * parameters[i][1]
-            res.append(vd_param)
+        res = {}
+        for key, value in parameters.items():
+            name_parameter = layer_name + '_velocity_' + key
+            if name_parameter not in self.velocity_parameters.keys():
+                self.velocity_parameters[name_parameter] = 0
+            velocity = self.beta * self.velocity_parameters[name_parameter] - self.learning_rate * value
+
+            if self.nesterov:
+                vd_param = self.beta * velocity - self.learning_rate * value
+            else:
+                vd_param = velocity
+            self.velocity_parameters[name_parameter] = vd_param
+            res[key] = vd_param
         return res
 
 
 class Adam(BaseOptimizer):
 
-    def __init__(self, beta1, beta2, learning_rate):
-        super().__init__()
+    def __init__(self, beta1, beta2, learning_rate, nesterov=False):
+        super().__init__(learning_rate)
         self.beta1 = beta1
         self.beta2 = beta2
-        self.learning_rate = learning_rate
+        self.nesterov = nesterov
+        self.parameters_adam = {'iteration': 0}
 
-    def apply_gradients(self, parameters):
-        pass
+    def apply_gradients(self, layer_name, parameters):
+        res = {}
+        for key, value in parameters.items():
+            name_parameter = layer_name + '_velocity_' + key
+            if name_parameter not in self.parameters_adam.keys():
+                self.parameters_adam[name_parameter] = [[0, 0], 0]  # 1-е список - истории 1-го и 2-го моментов
+                                                                    # 2-е значение  - номер итерации
+            m = self.beta1 * self.parameters_adam[name_parameter][0][0] + (1 - self.beta1) * value
+            v = self.beta2 * self.parameters_adam[name_parameter][0][1] + (1 - self.beta2) * value ** 2
+            if self.nesterov:
+                self.parameters_adam[name_parameter][0][0] = m + (1 - self.beta1) * value
+            else:
+                self.parameters_adam[name_parameter][0][0] = m
+
+            self.parameters_adam[name_parameter][0][1] = v
+            self.parameters_adam['iteration'] += 1
+
+            iteration = self.parameters_adam['iteration']
+            m_cor = m / (1 - self.beta1 ** iteration)
+            v_cor = v / (1 - self.beta2 ** iteration)
+
+            param_update = -self.learning_rate * (m_cor / (np.sqrt(v_cor) + 1e-6))
+            res[key] = param_update
+
+        return res
+

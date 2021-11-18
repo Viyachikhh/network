@@ -1,6 +1,10 @@
 import numpy as np
 
 
+def get_string_name(val):
+    return f'{val=}'.split('=')[0]
+
+
 def get_im2col_indices(x_shape, filter_height, filter_width, padding=0, stride=1):
     # Функция для получения правильных размерностей
     N, C, H, W = x_shape
