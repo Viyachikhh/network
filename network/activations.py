@@ -1,44 +1,90 @@
 import numpy as np
 
-
-def relu(h):
-    return np.where(h > 0, h, 0)
+from abc import ABC, abstractmethod
 
 
-def softmax(h):
-    exp_h = np.exp(h)
-    #print('act', exp_h.sum(axis=0, keepdims=True).shape)
-    return exp_h / exp_h.sum(axis=0, keepdims=True)
+class Activation(ABC):
+
+    @abstractmethod
+    def __call__(self, inputs):
+        pass
+
+    @abstractmethod
+    def _activation_(self, inputs):
+        pass
+
+    @abstractmethod
+    def derivative(self, other_input):
+        pass
 
 
-def sigmoid(h):
-    return 1 / (1 + np.exp(-h))
+class ReLU(Activation):
+
+    def __init__(self):
+        self.h = None
+
+    def __call__(self, inputs):
+        self.h = inputs
+        return self._activation_(self.h)
+
+    def _activation_(self, inputs):
+        return np.where(inputs > 0, inputs, 0)
+
+    def derivative(self, other_input):
+        return np.where(other_input > 0, 1, 0)
 
 
-def tanh(h):
-    return np.tanh(h)
+class Sigmoid(Activation):
+
+    def __init__(self):
+        self.h = None
+
+    def __call__(self, inputs):
+        self.h = inputs
+        return self._activation_(self.h)
+
+    def _activation_(self, inputs):
+        return 1 / (1 + np.exp(inputs))
+
+    def derivative(self, other_input):
+        return self._activation_(other_input) * (1 - self._activation_(other_input))
 
 
-def derivative_relu(h):
-    return np.where(h > 0, 1, 0)
+class Tanh(Activation):
+
+    def __init__(self):
+        self.h = None
+
+    def __call__(self, inputs):
+        self.h = inputs
+        return self._activation_(self.h)
+
+    def _activation_(self, inputs):
+        return np.tanh(inputs)
+
+    def derivative(self, other_input):
+        return 1 - self._activation_(other_input) ** 2
 
 
-def derivative_softmax(h):
-    """
-    IN PROGRESS...
-    """
-    softmax_values = softmax(h)
-    result = np.zeros((h.shape[1], h.shape[1]))
-    for i in range(h.shape[1]):
-        for j in range(h.shape[1]):
-            result[i, j] = softmax_values[i] * (1 - softmax_values[i]) if i == j else \
-                softmax_values[i] * softmax_values[j]
-    return result
+class Softmax(Activation):
 
+    def __init__(self):
+        self.h = None
 
-def derivative_sigmoid(h):
-    return sigmoid(h) * (1 - sigmoid(h))
+    def __call__(self, inputs):
+        self.h = inputs
+        return self._activation_(self.h)
 
+    def _activation_(self, inputs):
+        exp_h = np.exp(inputs)
+        return exp_h / exp_h.sum(axis=0, keepdims=True)
 
-def derivative_tanh(h):
-    return 1 - tanh(h) ** 2
+    def derivative(self, other_input):
+        softmax_values = self._activation_(other_input)
+        result = np.zeros((other_input.shape[1],other_input.shape[1]))
+        for i in range(other_input.shape[1]):
+            for j in range(other_input.shape[1]):
+                result[i, j] = softmax_values[i] * (1 - softmax_values[i]) if i == j else \
+                    softmax_values[i] * softmax_values[j]
+        return result
+

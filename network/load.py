@@ -1,7 +1,6 @@
 import numpy as np
 from mnist import MNIST
 
-import matplotlib.pyplot as plt
 
 def to_categorical(label):
     list_ = [0.] * 11

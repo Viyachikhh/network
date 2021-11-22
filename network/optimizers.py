@@ -13,7 +13,7 @@ class BaseOptimizer(object):
     def apply_gradients(self, layer_name, parameters):
         res = []
         for i in range(len(parameters)):
-            value = -parameters[i]
+            value = -self.learning_rate * parameters[i]
             res.append(value)
         return res
 
@@ -31,14 +31,14 @@ class Momentum(BaseOptimizer):
         :parameter: список градиентов параметров
         """
         res = {}
-        for key, value in parameters.items():
+        for key, grad in parameters.items():
             name_parameter = layer_name + '_velocity_' + key
             if name_parameter not in self.velocity_parameters.keys():
                 self.velocity_parameters[name_parameter] = 0
-            velocity = self.beta * self.velocity_parameters[name_parameter] - self.learning_rate * value
+            velocity = self.beta * self.velocity_parameters[name_parameter] - self.learning_rate * grad
 
             if self.nesterov:
-                vd_param = self.beta * velocity - self.learning_rate * value
+                vd_param = self.beta * velocity - self.learning_rate * grad
             else:
                 vd_param = velocity
             self.velocity_parameters[name_parameter] = vd_param
@@ -57,22 +57,21 @@ class Adam(BaseOptimizer):
 
     def apply_gradients(self, layer_name, parameters):
         res = {}
-        for key, value in parameters.items():
+        iteration = 0
+        for key, grad in parameters.items():
             name_parameter = layer_name + '_velocity_' + key
             if name_parameter not in self.parameters_adam.keys():
-                self.parameters_adam[name_parameter] = [[0, 0], 0]  # 1-е список - истории 1-го и 2-го моментов
+                self.parameters_adam[name_parameter] = [0, 0]  # 1-е список - истории 1-го и 2-го моментов
                                                                     # 2-е значение  - номер итерации
-            m = self.beta1 * self.parameters_adam[name_parameter][0][0] + (1 - self.beta1) * value
-            v = self.beta2 * self.parameters_adam[name_parameter][0][1] + (1 - self.beta2) * value ** 2
+            m = self.beta1 * self.parameters_adam[name_parameter][0] + (1 - self.beta1) * grad
+            v = self.beta2 * self.parameters_adam[name_parameter][1] + (1 - self.beta2) * grad ** 2
             if self.nesterov:
-                self.parameters_adam[name_parameter][0][0] = m + (1 - self.beta1) * value
+                self.parameters_adam[name_parameter][0] = m + (1 - self.beta1) * grad
             else:
-                self.parameters_adam[name_parameter][0][0] = m
+                self.parameters_adam[name_parameter][0] = m
 
-            self.parameters_adam[name_parameter][0][1] = v
-            self.parameters_adam['iteration'] += 1
-
-            iteration = self.parameters_adam['iteration']
+            self.parameters_adam[name_parameter][1] = v
+            iteration += 1
             m_cor = m / (1 - self.beta1 ** iteration)
             v_cor = v / (1 - self.beta2 ** iteration)
 

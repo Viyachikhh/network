@@ -1,8 +1,11 @@
 import numpy as np
 
+from network.activations import *
 
-def get_string_name(val):
-    return f'{val=}'.split('=')[0]
+
+def get_activation(str_name):
+    dict_activations = {'relu': ReLU(), 'tanh': Tanh(), 'sigmoid': Sigmoid(), 'softmax': Softmax()}
+    return dict_activations[str_name]
 
 
 def get_im2col_indices(x_shape, filter_height, filter_width, padding=0, stride=1):
@@ -82,8 +85,3 @@ def getWindows(input_, output_size, filter_size, padding=0, stride=1, dilate=0):
                  filter_height_stride, filter_width_stride))
     # кол-во байт по размерностям, для получения нужного многомерного массива с учётом сдвига
 
-
-def xavier_uniform_generator(prev_shape, shape, sizes_weights):
-    return np.random.uniform(low=-np.sqrt(6 / (prev_shape + shape)),
-                             high=np.sqrt(6 / (prev_shape + shape)),
-                             size=sizes_weights)

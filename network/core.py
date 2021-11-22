@@ -7,11 +7,12 @@ from network.activations import *
 from network.utils import col2im_indices, im2col_indices, getWindows
 from network.initializers import XavierWeights
 from network.optimizers import Momentum
+from network.losses import CategoricalCrossEntropy
 
-DICT_ACTIVATIONS = {'tanh': tanh, 'sigmoid': sigmoid, 'relu': relu, 'softmax': softmax}
-DICT_DERIVATIVES = {'tanh': derivative_tanh, 'sigmoid': derivative_sigmoid,
-                    'relu': derivative_relu, 'softmax': derivative_softmax}
-REV_ACTIVATIONS = {value: key for key, value in DICT_ACTIVATIONS.items()}
+from network.utils import get_activation
+
+
+AVAILABLE_ACTIVATIONS = ['tanh', 'sigmoid', 'relu', 'softmax']
 
 
 class Layer(ABC):
@@ -51,7 +52,8 @@ class DenseLayer(Layer):
         self.prev_layer_size = None
         self.weights_initializer = XavierWeights()
         self.bias = np.zeros((self.layer_size, 1))
-        self.activation = DICT_ACTIVATIONS.get(activation, None)
+        self.activation_name = activation
+        self.activation = get_activation(self.activation_name)
         self.cache = None
 
     def build_weights(self, prev_size):
@@ -67,8 +69,7 @@ class DenseLayer(Layer):
     def get_gradients(self, dZ, activation_next=None):
         db = (1 / self.cache[0].shape[1]) * dZ.sum(axis=1, keepdims=True)
         dW = (1 / self.cache[0].shape[1]) * (dZ @ self.cache[0].T)
-        derivative = DICT_DERIVATIVES.get(activation_next, None)
-        derivative_values = derivative(self.cache[0]) if derivative is not None else self.cache[0]
+        derivative_values = activation_next.derivative(self.cache[0]) if activation_next is not None else self.cache[0]
         next_dZ = (self.weights.T @ dZ) * derivative_values
         return dW, db, next_dZ
 
@@ -79,7 +80,8 @@ class DenseLayer(Layer):
 
         h = (self.weights @ inputs) + self.bias
         self.cache = (inputs, h)
-        result = h if self.activation is None else self.activation(h)
+        result = h if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
+            else self.activation(h)
         return result
 
     def __str__(self):
@@ -98,7 +100,8 @@ class Conv2DLayer(Layer):
         self.padding = padding
         self.stride = stride
 
-        self.activation = DICT_ACTIVATIONS.get(activation, None)
+        self.activation_name = activation
+        self.activation = get_activation(self.activation_name)
         self.cache = None
 
     def build_weights(self, prev_size):
@@ -122,7 +125,8 @@ class Conv2DLayer(Layer):
         Z = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)  # свёртка входных данных с фильтром
         Z += self.bias[None, :, None, None]
         self.cache = (windows, inputs)
-        result = Z if self.activation is None else self.activation(Z)
+        result = Z if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
+            else self.activation(Z)
         return result
 
     def get_gradients(self, dZ, activation_next=None):
@@ -135,8 +139,7 @@ class Conv2DLayer(Layer):
 
         dW = np.einsum('ijklmn, iokl -> ojmn', input_windows, dZ)  # свёртка входных данных и dZ
         dZ_prev = np.einsum('ijklmn, jomn -> iokl', windows_dZ, weights_flipped)  # полная свёртка dZ и весов
-        derivative = DICT_DERIVATIVES.get(activation_next, None)
-        derivative_values = derivative(inputs) if derivative is not None else np.ones(inputs.shape)
+        derivative_values = activation_next.derivative(inputs) if activation_next is not None else np.ones(inputs.shape)
         dZ_prev *= derivative_values
         db = np.sum(dZ, axis=(0, 2, 3))
         return dW, db, dZ_prev
@@ -201,7 +204,7 @@ class MaxPoolingLayer(Layer):
         return dZ_next
 
     def __str__(self):
-        pass
+        return f'MaxPooling layer with pool_size = {self.pool_size}'
 
     def build_weights(self, prev_size):
         pass
@@ -243,6 +246,7 @@ class NeuralNetwork(object):
             self.layers_dict[f'layer_{i}'] = your_layers[i]
 
         self.optimizer = Momentum(learning_rate=0.004, beta=0.9, nesterov=True)
+        self.loss = CategoricalCrossEntropy()
 
     def __call__(self, inputs):
         for i in range(len(self.layers_dict)):
@@ -250,13 +254,13 @@ class NeuralNetwork(object):
             x = layer(inputs) if i == 0 else layer(x)
         return x
 
-    def back_propagation(self, y_true, y_pred):
+    def back_propagation(self):
         layers = list(self.layers_dict.keys())[::-1]
-        dZ = y_pred - y_true
+        dZ = self.loss.gradient_loss()
         for i, layer in enumerate(layers):
             if i != len(layers) - 1:
                 try:
-                    activation = REV_ACTIVATIONS.get(self.layers_dict[layers[i + 1]].activation, None)
+                    activation = self.layers_dict[layers[i + 1]].activation
                 except AttributeError:  # на случай, если в слое не предусмотрена функция активации
                     activation = None
             else:
@@ -284,17 +288,16 @@ class NeuralNetwork(object):
             start = default_timer()
             pred = self(data[rand_int:rand_int + size_of_batch])  # генерирование предсказаний
             print(f'time = {default_timer() - start}')  # сколько времени занимала одна эпоха обучения
-            loss = categorical_cross_entropy(labels[rand_int:rand_int + size_of_batch].T, pred)
-            self.back_propagation(labels[rand_int:rand_int + size_of_batch].T, pred)
+            loss = self.loss.calculate_loss(labels[rand_int:rand_int + size_of_batch].T, pred)
+            self.back_propagation()
             print(f'loss = {loss}', end=', ')
             train_loss.append(loss)
             if val is not None:  # на валидационной
                 val_pred = self(val[0])
-                val_loss = categorical_cross_entropy(val[1].T, val_pred)
+                val_loss = self.loss.calculate_loss(val[1].T, val_pred, without_memory=True)
                 valid_loss.append(val_loss)
                 print(f'validation loss = {val_loss}')
         return train_loss, valid_loss if val is not None else train_loss
 
 
-def categorical_cross_entropy(y_true, y_pred):
-    return (-1 / y_true.shape[1]) * np.sum(y_true * np.log(y_pred + 1e-5))
+
