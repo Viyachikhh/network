@@ -1,21 +1,19 @@
-from abc import ABC, abstractmethod
 from collections import OrderedDict
 from timeit import default_timer
 
-
 from network.activations import *
 from network.utils import col2im_indices, im2col_indices, getWindows
-from network.initializers import XavierWeights
+from network.initializers import XavierWeights, ZerosInitializer
 from network.optimizers import Momentum
 from network.losses import CategoricalCrossEntropy
 
 from network.utils import get_activation
 
-
 AVAILABLE_ACTIVATIONS = ['tanh', 'sigmoid', 'relu', 'softmax']
 
 
 class Layer(ABC):
+    count = 0
 
     @abstractmethod
     def __init__(self):
@@ -34,7 +32,7 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
+    def update_weights(self, dZ, optimizer, activation_next=None):
         pass
 
     @abstractmethod
@@ -44,30 +42,33 @@ class Layer(ABC):
 
 class DenseLayer(Layer):
 
-    def __init__(self, layer_size, activation=None):
+    def __init__(self, layer_size, activation=None, name=None):
         """
         initialization of object DenseLayer
         """
         self.layer_size = layer_size
         self.prev_layer_size = None
         self.weights_initializer = XavierWeights()
-        self.bias = np.zeros((self.layer_size, 1))
+        self.bias_initializer = ZerosInitializer()
         self.activation_name = activation
         self.activation = get_activation(self.activation_name)
         self.cache = None
+        self.name = f'layer_{Layer.count}' if name is None else name
+        Layer.count += 1
 
     def build_weights(self, prev_size):
-        return self.weights_initializer(prev_size, self.layer_size, (self.layer_size, prev_size))
+        return self.weights_initializer(prev_size, self.layer_size, (self.layer_size, prev_size)), \
+               self.bias_initializer(self.layer_size, size=None)
 
-    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
+    def update_weights(self, dZ, optimizer, activation_next=None):
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        parameters = optimizer.apply_gradients(layer_string_name, {'gradW': gradW, 'gradb': gradb})
+        parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
         self.weights += parameters['gradW']
         self.bias += parameters['gradb']
         return gradZ
 
     def get_gradients(self, dZ, activation_next=None):
-        db = (1 / self.cache[0].shape[1]) * dZ.sum(axis=1, keepdims=True)
+        db = (1 / self.cache[0].shape[1]) * dZ.sum(axis=1)
         dW = (1 / self.cache[0].shape[1]) * (dZ @ self.cache[0].T)
         derivative_values = activation_next.derivative(self.cache[0]) if activation_next is not None else self.cache[0]
         next_dZ = (self.weights.T @ dZ) * derivative_values
@@ -76,9 +77,9 @@ class DenseLayer(Layer):
     def __call__(self, inputs):
         if 'weights' not in vars(self).keys():
             prev_size = inputs.shape[0]
-            self.weights = self.build_weights(prev_size)
+            self.weights, self.bias = self.build_weights(prev_size)
 
-        h = (self.weights @ inputs) + self.bias
+        h = (self.weights @ inputs) + self.bias[:, None]
         self.cache = (inputs, h)
         result = h if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
             else self.activation(h)
@@ -90,10 +91,10 @@ class DenseLayer(Layer):
 
 class Conv2DLayer(Layer):
 
-    def __init__(self, count_filters, filter_size, stride=1, padding=False, activation=None):
+    def __init__(self, count_filters, filter_size, stride=1, padding=False, activation=None, name=None):
         self.prev_channels = None
         self.weights_initializer = XavierWeights()
-        self.bias = np.zeros(count_filters)
+        self.bias_initializer = ZerosInitializer()
 
         self.count_filters = count_filters
         self.filter_size = filter_size
@@ -103,15 +104,18 @@ class Conv2DLayer(Layer):
         self.activation_name = activation
         self.activation = get_activation(self.activation_name)
         self.cache = None
+        self.name = f'layer_{Layer.count}' if name is None else name
+        Layer.count += 1
 
     def build_weights(self, prev_size):
         return self.weights_initializer(prev_size, self.count_filters * prev_size * self.filter_size ** 2,
-                                        (self.count_filters, prev_size, self.filter_size, self.filter_size))
+                                        (self.count_filters, prev_size, self.filter_size, self.filter_size)), \
+               self.bias_initializer(self.count_filters, size=None)
 
     def __call__(self, inputs):
         if 'weights' not in vars(self).keys():
             prev_size = inputs.shape[1]
-            self.weights = self.build_weights(prev_size)
+            self.weights, self.bias = self.build_weights(prev_size)
             self.padding_size = (self.weights.shape[2] // 2 if self.padding else 0,
                                  self.weights.shape[3] // 2 if self.padding else 0)
 
@@ -144,12 +148,12 @@ class Conv2DLayer(Layer):
         db = np.sum(dZ, axis=(0, 2, 3))
         return dW, db, dZ_prev
 
-    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
+    def update_weights(self, dZ, optimizer, activation_next=None):
         """
         Собственно, обновление весов
         """
         gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
-        parameters = optimizer.apply_gradients(layer_string_name, {'gradW': gradW, 'gradb': gradb})
+        parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
         self.weights += parameters['gradW']
         self.bias += parameters['gradb']
         return gradZ
@@ -160,10 +164,12 @@ class Conv2DLayer(Layer):
 
 class MaxPoolingLayer(Layer):
 
-    def __init__(self, pool_size=2, input_channels=None):
+    def __init__(self, pool_size=2, input_channels=None, name=None):
         self.input_channels = input_channels
         self.pool_size = pool_size
         self.cache = None
+        self.name = f'layer_{Layer.count}' if name is None else name
+        Layer.count += 1
 
     def __call__(self, inputs):
         X_reshaped = inputs.reshape(inputs.shape[0] * inputs.shape[1], 1, inputs.shape[2], inputs.shape[3])
@@ -183,7 +189,7 @@ class MaxPoolingLayer(Layer):
 
         return result
 
-    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
+    def update_weights(self, dZ, optimizer, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -212,15 +218,17 @@ class MaxPoolingLayer(Layer):
 
 class FlattenLayer(Layer):
 
-    def __init__(self):
+    def __init__(self, name=None):
         self.cache = None
+        self.name = f'layer_{Layer.count}' if name is None else name
+        Layer.count += 1
 
     def get_gradients(self, dZ):
         dZ_next = np.swapaxes(dZ, 0, 1)
         dZ_next = dZ_next.reshape(self.cache[0].shape)
         return dZ_next
 
-    def update_weights_and_history(self, dZ, optimizer, layer_string_name, activation_next=None):
+    def update_weights(self, dZ, optimizer, activation_next=None):
         dZ_next = self.get_gradients(dZ)
         return dZ_next
 
@@ -265,9 +273,8 @@ class NeuralNetwork(object):
                     activation = None
             else:
                 activation = None
-            dZ = self.layers_dict[layers[i]].update_weights_and_history(dZ=dZ, optimizer=self.optimizer,
-                                                                        activation_next=activation,
-                                                                        layer_string_name=f'layer_{i}')
+            dZ = self.layers_dict[layers[i]].update_weights(dZ=dZ, optimizer=self.optimizer,
+                                                            activation_next=activation)
 
     def add_layer(self, *layers):
         cur_length = len(self.layers_dict)
@@ -298,6 +305,3 @@ class NeuralNetwork(object):
                 valid_loss.append(val_loss)
                 print(f'validation loss = {val_loss}')
         return train_loss, valid_loss if val is not None else train_loss
-
-
-

@@ -60,7 +60,7 @@ class Tanh(Activation):
         return self._activation_(self.h)
 
     def _activation_(self, inputs):
-        return np.tanh(inputs)
+        return (np.exp(inputs) - np.exp(-inputs)) / (np.exp(inputs) + np.exp(-inputs))
 
     def derivative(self, other_input):
         return 1 - self._activation_(other_input) ** 2
@@ -81,7 +81,7 @@ class Softmax(Activation):
 
     def derivative(self, other_input):
         softmax_values = self._activation_(other_input)
-        result = np.zeros((other_input.shape[1],other_input.shape[1]))
+        result = np.zeros((other_input.shape[1], other_input.shape[1]))
         for i in range(other_input.shape[1]):
             for j in range(other_input.shape[1]):
                 result[i, j] = softmax_values[i] * (1 - softmax_values[i]) if i == j else \
