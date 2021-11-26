@@ -1,5 +1,7 @@
 import numpy as np
-
+"""
+Перенести на Tensor
+"""
 
 class BaseOptimizer(object):
     """

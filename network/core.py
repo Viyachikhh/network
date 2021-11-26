@@ -11,6 +11,10 @@ from network.utils import get_activation
 
 AVAILABLE_ACTIVATIONS = ['tanh', 'sigmoid', 'relu', 'softmax']
 
+"""
+Перенести на Tensor
+"""
+
 
 class Layer(ABC):
     count = 0

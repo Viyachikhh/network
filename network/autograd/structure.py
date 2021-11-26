@@ -1,7 +1,7 @@
 import numpy as np
 
 
-from typing import List, NamedTuple, Callable, Optional, Union
+from typing import List, NamedTuple, Callable
 
 """
 В дальнейшем, заменить все np.ndarray на Tensor 
@@ -13,32 +13,20 @@ class Dependency(NamedTuple):  # для того, чтобы следить за
     grad_fn: Callable[[np.ndarray], np.ndarray]
 
 
-Arrayable = Union[float, list, np.ndarray]
-
-
-def ensure_array(arrayable: Arrayable) -> np.ndarray:
-    if isinstance(arrayable, np.ndarray):
-        return arrayable
-    else:
-        return np.array(arrayable)
-
-
-Tensorable = Union['Tensor', float, np.ndarray]
-
-
-def ensure_tensor(tensorable: Tensorable):
-    if isinstance(tensorable, Tensor):
-        return tensorable
-    else:
-        return Tensor(tensorable)
-
-
 class Graph:
+    """
+    Будет частью класса нейронной сети
+    """
     def __init__(self):
         self.variables = dict()
         self.operations = dict()
-        global _g
-        _g = self
+
+    def add_node(self, layer):
+        """
+        Добавить узлы со слоя
+        :return:
+        """
+        pass
 
     def forward_pass(self):
         """
@@ -93,9 +81,11 @@ class Tensor(Node):
 
         self.depend_on = depend_on
         self.shape = self._value.shape
-        self.name = f"Variable/{Tensor.count_parameters}" if name is None else name
+        self.name = f"Tensor/{Tensor.count_parameters}" if name is None else name
 
-        _g.variables.update({self: None})
+        if self.requires_grad:
+            self.grad = np.zeros_like(self._value)
+
         Tensor.count_parameters += 1
 
     @property
@@ -128,6 +118,20 @@ class Tensor(Node):
     def __matmul__(self, other):
         pass
 
+    def __convolution__(self, other):
+        pass
+
+    """
+    def __log_a__(self):
+        pass
+
+    def __sin__(self):
+        pass
+
+    def __cos__(self):
+        pass
+    """
+
     def backward(self, dVar):
         """
         Обновление переменной с учётом градиента
@@ -151,7 +155,7 @@ class Add(Operation):
         self.name += f'Add/{Add.count_parameters}' if name is None else name
         Add.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
 
 
@@ -166,7 +170,7 @@ class Multiply(Operation):
         self.name += f'Multiply/{Multiply.count_parameters}' if name is None else name
         Multiply.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
 
 
@@ -182,7 +186,7 @@ class Power(Operation):
         self.name += f'Power/{Power.count_parameters}' if name is None else name
         Power.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
 
 
@@ -197,7 +201,7 @@ class Matmul(Operation):
         self.name += f'Matmul/{Matmul.count_parameters}' if name is None else name
         Matmul.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
 
 
@@ -212,7 +216,7 @@ class Divide(Operation):
         self.name += f'Divide/{Divide.count_parameters}' if name is None else name
         Divide.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
 
 
@@ -228,5 +232,5 @@ class Convolution(Operation):
         self.name += f'Convolution/{Divide.count_parameters}' if name is None else name
         Convolution.count_parameters += 1
 
-    def __call__(self):
+    def forward(self):
         pass
