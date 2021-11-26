@@ -33,7 +33,18 @@ class CategoricalCrossEntropy(Loss):
         return self.predictions - self.labels
 
 
+class MSE(Loss):
 
+    def __init__(self):
+        super().__init__()
 
+    def calculate_loss(self, y_true, y_pred, without_memory=False):
+        if not without_memory:
+            self.labels = y_true
+            self.predictions = y_pred
+        return 1 / y_true.shape[1] * np.sum((y_true - y_pred) ** 2)
+
+    def gradient_loss(self):
+        return (2 / self.labels.shape[1]) * (self.predictions - self.labels)
 
 

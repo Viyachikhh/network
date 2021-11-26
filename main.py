@@ -18,7 +18,7 @@ def make_model():
     flatten = FlattenLayer()
     h_1 = DenseLayer(256, 'relu')
     end_network = DenseLayer(11, 'softmax')
-    network = NeuralNetwork(conv, pool, conv2, pool2, flatten)
+    network = NeuralNetwork(flatten)
     network.add_layer(h_1, end_network)
     network.optimizer = Adam(beta1=0.90, beta2=0.999, learning_rate=0.004)
     return network
