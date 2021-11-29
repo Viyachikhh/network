@@ -1,22 +1,17 @@
 import numpy as np
 
-
-from typing import List, NamedTuple, Callable
+from network.utils import getWindows
 
 """
 В дальнейшем, заменить все np.ndarray на Tensor 
 """
 
 
-class Dependency(NamedTuple):  # для того, чтобы следить за историй градиентоа
-    tensor: 'Tensor'
-    grad_fn: Callable[[np.ndarray], np.ndarray]
-
-
 class Graph:
     """
     Будет частью класса нейронной сети
     """
+
     def __init__(self):
         self.variables = dict()
         self.operations = dict()
@@ -47,44 +42,38 @@ class Graph:
         """
 
 
-class Node:
-    def __init__(self):
-        pass
-
-
 #  -------------элементы графа-------------
 
-class Operation(Node):
+class Operation:
 
-    def __init__(self, left_value, right_value=None, name='Operation '):
-        super().__init__()
-        self.input_values = [left_value, right_value]
-        self.name = name
+    def forward(self, tensor):
+        pass
 
-    def __call__(self):
+    def backward(self, tensor, grad):
         pass
 
 
-class Tensor(Node):
+class Tensor:
     """
     Класс  переменной
     Каждая переменная будет хранить по итогу значение градиента
     """
     count_parameters = 0
 
-    def __init__(self, value, requires_grad=False, depend_on: List[Dependency] = None, name=None):
-        super().__init__()
+    def __init__(self, value, history_tensor=None, gradient=None, operation=None, name=None):
         self._value = value
 
-        self.requires_grad = requires_grad
-        self.grad = None
+        if gradient:
+            self.requires_grad = True
+            self.grad = gradient
+        else:
+            self.requires_grad = False
+            self.grad = np.zeros_like(gradient)
 
-        self.depend_on = depend_on
-        self.shape = self._value.shape
+        self.operation = operation
+        self.history_update = history_tensor
+        self.shape = self._value.shape if isinstance(self.value, np.ndarray) else 1
         self.name = f"Tensor/{Tensor.count_parameters}" if name is None else name
-
-        if self.requires_grad:
-            self.grad = np.zeros_like(self._value)
 
         Tensor.count_parameters += 1
 
@@ -94,51 +83,54 @@ class Tensor(Node):
 
     @value.setter
     def value(self, new_value):
-        if self.requires_grad is None:
+        if not self.requires_grad:
             raise AttributeError('Can\'t reassign constant')
         else:
             self._value = new_value
-            self.grad = 0
+            self.grad = np.zeros_like(self.grad)
 
     def __add__(self, other):
-        pass
+        return Add().forward([self, other])
 
     def __mul__(self, other):
-        pass
+        return Multiply().forward([self, other])
 
-    def __neg__(self, other):
-        pass
+    def __neg__(self):
+        return Sub().forward([0, self])
 
     def __pow__(self, other):
-        pass
+        return Pow().forward([self, other])
 
     def __sub__(self, other):
-        pass
+        return Sub().forward([self, other])
+
+    def __truediv__(self, other):
+        return Divide().forward([self, other])
 
     def __matmul__(self, other):
-        pass
+        return Matmul().forward([self, other])
 
-    def __convolution__(self, other):
-        pass
+    def __repr__(self):
+        return f'name: {self.name}, value: {self.value}, gradient: {self.grad}'
 
-    """
-    def __log_a__(self):
-        pass
+    def convolution(self, other, padding_size, strides):
+        return Convolution().forward([self, other], padding_size=padding_size, strides=strides)
 
-    def __sin__(self):
-        pass
+    def backward(self, optimizer=None, gradient=None):
+        if gradient is None:
+            self.grad = np.ones(self.value.shape) if isinstance(self.value, np.ndarray) else 1
+            gradient = self.grad
 
-    def __cos__(self):
-        pass
-    """
-
-    def backward(self, dVar):
-        """
-        Обновление переменной с учётом градиента
-
-        :return:
-        """
-        pass
+        if self.operation:
+            gradient = self.operation.backward(self.history_update, gradient)
+        if self.history_update:
+            for i in range(len(gradient)):
+                tensor = self.history_update[i]
+                tensor.grad = gradient[i]
+                #print(gradient[i])
+                #print(tensor.grad)
+                #optimizer.apply_gradients(tensor)
+                tensor.backward(gradient=gradient[i])
 
 
 #  -------операции над элементами---------
@@ -148,89 +140,197 @@ class Add(Operation):
     """
     x+y, град. = dZ, dZ
     """
-    count_parameters = 0
+    count_operations = 0
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Add/{Add.count_parameters}' if name is None else name
-        Add.count_parameters += 1
+    def __init__(self):
+        self.name = f'Add/{Add.count_operations}'
+        Add.count_operations += 1
 
-    def forward(self):
-        pass
+    def forward(self, tensors):
+        if isinstance(tensors[0], (float, int)):
+            left_value = tensors[0]
+            right_value = tensors[1].value
+        elif isinstance(tensors[1], (float, int)):
+            left_value = tensors[0].value
+            right_value = tensors[1]
+        else:
+            left_value = tensors[0].value
+            right_value = tensors[1].value
+        return Tensor(left_value + right_value, tensors, operation=self)
+
+    def backward(self, tensors, grad):
+        if isinstance(tensors[0], (float, int)) or isinstance(tensors[1], (float, int)):
+            return [grad]
+        return [grad, grad]
+
+
+class Sub(Operation):
+    """
+    x+y, град. = dZ, dZ
+    """
+    count_operations = 0
+
+    def __init__(self):
+        self.name = f'Sub/{Sub.count_operations}'
+        Sub.count_operations += 1
+
+    def forward(self, tensors):
+        if isinstance(tensors[0], (float, int)):
+            left_value = tensors[0]
+            right_value = tensors[1].value
+        elif isinstance(tensors[1], (float, int)):
+            left_value = tensors[0].value
+            right_value = tensors[1]
+        else:
+            left_value = tensors[0].value
+            right_value = tensors[1].value
+        return Tensor(left_value - right_value, tensors, operation=self)
+
+    def backward(self, tensors, grad):
+        if isinstance(tensors[0], (float, int)):
+            return [-grad]
+        elif isinstance(tensors[1], (float, int)):
+            return [grad]
+        return [grad, -grad]
 
 
 class Multiply(Operation):
     """
     x*y, град. = dZ*y, dZ*x
     """
-    count_parameters = 0
+    count_operations = 0
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Multiply/{Multiply.count_parameters}' if name is None else name
-        Multiply.count_parameters += 1
+    def __init__(self):
+        self.name = f'Multiply/{Multiply.count_operations}'
+        Multiply.count_operations += 1
 
-    def forward(self):
-        pass
+    def forward(self, tensors):
+        if isinstance(tensors[0], (float, int)):
+            left_value = tensors[0]
+            right_value = tensors[1].value
+        elif isinstance(tensors[1], (float, int)):
+            left_value = tensors[0].value
+            right_value = tensors[1]
+        else:
+            left_value = tensors[0].value
+            right_value = tensors[1].value
+        return Tensor(left_value * right_value, tensors, operation=self)
+
+    def backward(self, tensors, grad):
+        if isinstance(tensors[0], (float, int)):
+            return [grad * tensors[1].value]
+        elif isinstance(tensors[1], (float, int)):
+            return [grad * tensors[0].value]
+        return [grad * tensors[1].value, grad * tensors[0].value]
 
 
-class Power(Operation):
+class Pow(Operation):
     """
     x^y, град. = dZ * x^(y-1), dZ * x^y * ln(x)
     """
+    count_operations = 0
 
-    count_parameters = 0
+    def __init__(self):
+        self.name = f'Pow/{Pow.count_operations}'
+        Pow.count_operations += 1
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Power/{Power.count_parameters}' if name is None else name
-        Power.count_parameters += 1
+    def forward(self, tensors):
+        if isinstance(tensors[0], (float, int)):
+            left_value = tensors[0]
+            right_value = tensors[1].value
+        elif isinstance(tensors[1], (float, int)):
+            left_value = tensors[0].value
+            right_value = tensors[1]
+        else:
+            left_value = tensors[0].value
+            right_value = tensors[1].value
+        return Tensor(np.power(left_value, right_value), tensors, operation=self)
 
-    def forward(self):
-        pass
+    def backward(self, tensors, grad):
+        if isinstance(tensors[0], (float, int)):
+            return [grad * np.power(tensors[0], tensors[1].value) * np.log(tensors[0])]
+        elif isinstance(tensors[1], (float, int)):
+            return [grad * np.power(tensors[0].value, tensors[1] - 1) * tensors[1]]
+        return [grad * np.power(tensors[0], tensors[1].value) * np.log(tensors[0]),
+                grad * np.power(tensors[0].value, tensors[1] - 1) * tensors[1]]
 
 
 class Matmul(Operation):
     """
     x@y, град. = dZ @ y.T, x.T @ dZ
     """
-    count_parameters = 0
+    count_operations = 0
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Matmul/{Matmul.count_parameters}' if name is None else name
-        Matmul.count_parameters += 1
+    def __init__(self):
+        self.name = f'Matmul/{Matmul.count_operations}'
+        Matmul.count_operations += 1
 
-    def forward(self):
-        pass
+    def forward(self, tensors):
+        return Tensor(tensors[0].value @ tensors[1].value, tensors, operation=self)
+
+    def backward(self, tensors, grad):
+        return [grad @ tensors[1].value.T, tensors[0].value.T @ grad]
 
 
 class Divide(Operation):
     """
     x/y, град. = dZ * (1/y) , dZ * (-x) * (1 / y^2)
     """
-    count_parameters = 0
+    count_operations = 0
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Divide/{Divide.count_parameters}' if name is None else name
-        Divide.count_parameters += 1
+    def __init__(self):
+        self.name = f'Divide/{Divide.count_operations}'
+        Divide.count_operations += 1
 
-    def forward(self):
-        pass
+    def forward(self, tensors):
+        if isinstance(tensors[0], (float, int)):
+            left_value = tensors[0]
+            right_value = tensors[1].value
+        elif isinstance(tensors[1], (float, int)):
+            left_value = tensors[0].value
+            right_value = tensors[1]
+        else:
+            left_value = tensors[0].value
+            right_value = tensors[1].value
+        return Tensor(left_value / right_value, tensors, operation=self)
+
+    def backward(self, tensors, grad):
+        if isinstance(tensors[0], (float, int)):
+            return [grad * (1 / tensors[1].value)]
+        elif isinstance(tensors[1], (float, int)):
+            return [-grad * tensors[0].value * (1 / np.power(tensors[1].value, 2))]
+
+        return [grad * (1 / tensors[1].value), -grad * tensors[0].value * (1 / np.power(tensors[1].value, 2))]
 
 
 class Convolution(Operation):
-    """
-    Мб и нет необходимости, если обычную свёртку приводить к матричному умножения
-    Я думаю
-    """
-    count_parameters = 0
 
-    def __init__(self, left_value, right_value, name=None):
-        super().__init__(left_value, right_value, name)
-        self.name += f'Convolution/{Divide.count_parameters}' if name is None else name
-        Convolution.count_parameters += 1
+    count_operations = 0
 
-    def forward(self):
-        pass
+    def __init__(self):
+        self.name = f'Convolution/{Convolution.count_operations}'
+        self.cache = None
+        Convolution.count_operations += 1
+
+    def forward(self, tensors, padding_size=None, strides=None, dilate=None):
+
+        height_output = (tensors[0].value.shape[2] - tensors[1].value.shape[2] + 2 * padding_size) // strides + 1
+        width_output = (tensors[0].value.shape[3] - tensors[1].value.shape[3] + 2 * padding_size) // strides + 1
+
+        output_shape = (tensors[0].value.shape[0], tensors[1].value.shape[1], height_output, width_output)
+        windows_input = getWindows(tensors[0].value, output_shape, filter_size=tensors[1].value.shape[2],
+                                   padding=padding_size, stride=strides)
+        self.cache = (windows_input, padding_size, strides)
+
+        return Tensor(np.einsum('ijklmn, ojmn -> iokl', self.cache[0], tensors[1].value), tensors, operation=self)
+
+    def backward(self, tensors, grad):
+
+        window_grad = getWindows(grad, tensors[0].value.shape, filter_size=tensors[1].value.shape[2],
+                                 padding=self.cache[1], stride=1, dilate=self.cache[-1] - 1)
+        weights_flipped = tensors[1].value[::-1, ::-1]
+
+        dW = np.einsum('ijklmn, iokl -> ojmn', self.cache[0], grad)
+        dZ_prev = np.einsum('ijklmn, jomn -> iokl', window_grad, weights_flipped)
+
+        return [dZ_prev, dW]
