@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 Перенести на Tensor
 """
 
+
 class Loss(ABC):
 
     def __init__(self):
@@ -49,5 +50,3 @@ class MSE(Loss):
 
     def gradient_loss(self):
         return (2 / self.labels.shape[1]) * (self.predictions - self.labels)
-
-

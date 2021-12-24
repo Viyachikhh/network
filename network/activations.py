@@ -38,6 +38,23 @@ class ReLU(Activation):
         return np.where(other_input > 0, 1, 0)
 
 
+class LeakyReLU(Activation):
+
+    def __init__(self):
+        self.h = None
+        self.coeff = 0.01
+
+    def __call__(self, inputs):
+        self.h = inputs
+        return self._activation_(self.h)
+
+    def _activation_(self, inputs):
+        return np.where(inputs > 0, inputs, self.coeff * inputs)
+
+    def derivative(self, other_input):
+        return np.where(other_input > 0, 1, self.coeff)
+
+
 class Sigmoid(Activation):
 
     def __init__(self):
@@ -84,11 +101,6 @@ class Softmax(Activation):
         return exp_h / exp_h.sum(axis=0, keepdims=True)
 
     def derivative(self, other_input):
-        softmax_values = self._activation_(other_input)
-        result = np.zeros((other_input.shape[1], other_input.shape[1]))
-        for i in range(other_input.shape[1]):
-            for j in range(other_input.shape[1]):
-                result[i, j] = softmax_values[i] * (1 - softmax_values[i]) if i == j else \
-                    softmax_values[i] * softmax_values[j]
-        return result
+        s = other_input.reshape(-1, 1)
+        return np.diagflat(s) - np.dot(s, s.T)
 

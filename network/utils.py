@@ -4,7 +4,8 @@ from network.activations import *
 
 
 def get_activation(str_name):
-    dict_activations = {'relu': ReLU(), 'tanh': Tanh(), 'sigmoid': Sigmoid(), 'softmax': Softmax()}
+    dict_activations = {'relu': ReLU(), 'tanh': Tanh(), 'sigmoid': Sigmoid(), 'softmax': Softmax(),
+                        'leaky_relu': LeakyReLU()}
     return dict_activations[str_name]
 
 

@@ -36,7 +36,7 @@ class Layer(ABC):
         pass
 
     @abstractmethod
-    def update_weights(self, dZ, optimizer, activation_next=None):
+    def update_weights(self, dZ, optimizer):
         pass
 
     @abstractmethod
@@ -64,18 +64,23 @@ class DenseLayer(Layer):
         return self.weights_initializer(prev_size, self.layer_size, (self.layer_size, prev_size)), \
                self.bias_initializer(self.layer_size, size=None)
 
-    def update_weights(self, dZ, optimizer, activation_next=None):
-        gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
+    def update_weights(self, dZ, optimizer):
+        derivative = dZ
+        if self.activation_name == 'softmax':
+            pass
+        elif self.activation is not None:
+            derivative *= self.activation.derivative(self.cache[1])
+
+        gradW, gradb, gradZ = self.get_gradients(derivative)
         parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
         self.weights += parameters['gradW']
         self.bias += parameters['gradb']
         return gradZ
 
-    def get_gradients(self, dZ, activation_next=None):
+    def get_gradients(self, dZ):
         db = (1 / self.cache[0].shape[1]) * dZ.sum(axis=1)
         dW = (1 / self.cache[0].shape[1]) * (dZ @ self.cache[0].T)
-        derivative_values = activation_next.derivative(self.cache[0]) if activation_next is not None else self.cache[0]
-        next_dZ = (self.weights.T @ dZ) * derivative_values
+        next_dZ = (self.weights.T @ dZ)
         return dW, db, next_dZ
 
     def __call__(self, inputs):
@@ -84,9 +89,11 @@ class DenseLayer(Layer):
             self.weights, self.bias = self.build_weights(prev_size)
 
         h = (self.weights @ inputs) + self.bias[:, None]
-        self.cache = (inputs, h)
+
         result = h if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
             else self.activation(h)
+        self.cache = (inputs, result)
+
         return result
 
     def __str__(self):
@@ -132,14 +139,16 @@ class Conv2DLayer(Layer):
 
         Z = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)  # свёртка входных данных с фильтром
         Z += self.bias[None, :, None, None]
-        self.cache = (windows, inputs)
+
         result = Z if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
             else self.activation(Z)
+
+        self.cache = (windows, inputs, result)
         return result
 
-    def get_gradients(self, dZ, activation_next=None):
+    def get_gradients(self, dZ):
         padding = self.weights.shape[2] - 1 if not self.padding else self.padding_size[0]
-        input_windows, inputs = self.cache
+        input_windows, inputs, _ = self.cache
         windows_dZ = getWindows(dZ, inputs.shape, filter_size=self.weights.shape[2], padding=padding, stride=1,
                                 dilate=self.stride - 1)  # dilate отвечает за количество нулей между элементами, если
         # stride != 1
@@ -147,16 +156,18 @@ class Conv2DLayer(Layer):
 
         dW = np.einsum('ijklmn, iokl -> ojmn', input_windows, dZ)  # свёртка входных данных и dZ
         dZ_prev = np.einsum('ijklmn, jomn -> iokl', windows_dZ, weights_flipped)  # полная свёртка dZ и весов
-        derivative_values = activation_next.derivative(inputs) if activation_next is not None else np.ones(inputs.shape)
-        dZ_prev *= derivative_values
         db = np.sum(dZ, axis=(0, 2, 3))
         return dW, db, dZ_prev
 
-    def update_weights(self, dZ, optimizer, activation_next=None):
+    def update_weights(self, dZ, optimizer):
         """
         Собственно, обновление весов
         """
-        gradW, gradb, gradZ = self.get_gradients(dZ, activation_next=activation_next)
+        derivative = dZ
+        if self.activation is not None:
+            derivative *= self.activation.derivative(self.cache[2])
+
+        gradW, gradb, gradZ = self.get_gradients(derivative)
         parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
         self.weights += parameters['gradW']
         self.bias += parameters['gradb']
@@ -270,15 +281,7 @@ class NeuralNetwork(object):
         layers = list(self.layers_dict.keys())[::-1]
         dZ = self.loss.gradient_loss()
         for i, layer in enumerate(layers):
-            if i != len(layers) - 1:
-                try:
-                    activation = self.layers_dict[layers[i + 1]].activation
-                except AttributeError:  # на случай, если в слое не предусмотрена функция активации
-                    activation = None
-            else:
-                activation = None
-            dZ = self.layers_dict[layers[i]].update_weights(dZ=dZ, optimizer=self.optimizer,
-                                                            activation_next=activation)
+            dZ = self.layers_dict[layers[i]].update_weights(dZ=dZ, optimizer=self.optimizer)
 
     def add_layer(self, *layers):
         cur_length = len(self.layers_dict)
@@ -289,17 +292,13 @@ class NeuralNetwork(object):
         train_loss = []
         if val is not None:
             valid_loss = []
-        ind = np.arange(data.shape[0])
         for epoch in range(count_epochs):
-            np.random.shuffle(ind)  # перемешивание данных
-            data = data[ind]
-            labels = labels[ind]
+            rand_int = np.random.randint(data.shape[0], size=size_of_batch) # перемешивание данных
             print(f'epoch {epoch + 1}')
-            rand_int = np.random.randint(0, data.shape[0] - size_of_batch + 1)
             start = default_timer()
-            pred = self(data[rand_int:rand_int + size_of_batch])  # генерирование предсказаний
-            print(f'time = {default_timer() - start}')  # сколько времени занимала одна эпоха обучения
-            loss = self.loss.calculate_loss(labels[rand_int:rand_int + size_of_batch].T, pred)
+            pred = self(data[rand_int])  # генерирование предсказаний
+            print(f'time = {default_timer() - start}')
+            loss = self.loss.calculate_loss(labels[rand_int].T, pred)
             self.back_propagation()
             print(f'loss = {loss}', end=', ')
             train_loss.append(loss)
@@ -308,4 +307,8 @@ class NeuralNetwork(object):
                 val_loss = self.loss.calculate_loss(val[1].T, val_pred, without_memory=True)
                 valid_loss.append(val_loss)
                 print(f'validation loss = {val_loss}')
+                test_real = np.argmax(val[1].T, axis=0)
+                test_pred = np.argmax(val_pred, axis=0)
+                print(f'accuracy = {np.mean(test_pred == test_real)} ')
+
         return train_loss, valid_loss if val is not None else train_loss

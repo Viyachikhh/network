@@ -31,3 +31,12 @@ class ZerosInitializer(BaseInitializer):
 
     def __call__(self, shape, size, prev_shape=None):
         return self.initializer(shape)
+
+
+class RandomNormal(BaseInitializer):
+
+    def __init__(self):
+        self.initializer = np.random.random
+
+    def __call__(self, shape, size, prev_shape=None):
+        return self.initializer(shape)

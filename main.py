@@ -1,5 +1,5 @@
 import numpy as np
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt
 
 
 from network.core import NeuralNetwork, DenseLayer, Conv2DLayer, FlattenLayer, MaxPoolingLayer
@@ -16,10 +16,9 @@ def make_model():
     conv2 = Conv2DLayer(8, filter_size=3, padding=True, activation='relu', stride=1)
     pool2 = MaxPoolingLayer()
     flatten = FlattenLayer()
-    h_1 = DenseLayer(256, 'relu')
+    h_1 = DenseLayer(128, 'relu')
     end_network = DenseLayer(11, 'softmax')
-    network = NeuralNetwork(flatten)
-    network.add_layer(h_1, end_network)
+    network = NeuralNetwork(conv, pool, conv2, pool2, flatten, h_1, end_network)
     network.optimizer = Adam(beta1=0.90, beta2=0.999, learning_rate=0.004)
     return network
 
