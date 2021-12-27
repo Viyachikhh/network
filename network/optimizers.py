@@ -1,13 +1,9 @@
 import numpy as np
-"""
-Перенести на Tensor
-"""
 
 
-class BaseOptimizer(object):
+class BaseOptimizer:
     """
-    Входные данные для оптимизатора - список кортежей, состоящих из истории и градиента параметра.
-    Если мы не используем исторрию (оптимизационный алгоритм не предполагает использование истории) - передаём None.
+    Inputs - dict with name of parameter and his values.
     """
 
     def __init__(self, learning_rate):
@@ -31,7 +27,7 @@ class Momentum(BaseOptimizer):
 
     def apply_gradients(self, layer_name, parameters):
         """
-        :parameter: список градиентов параметров
+        :parameter: list of gradient params
         """
         res = {}
         for key, grad in parameters.items():
@@ -64,8 +60,7 @@ class Adam(BaseOptimizer):
         for key, grad in parameters.items():
             name_parameter = layer_name + '_velocity_' + key
             if name_parameter not in self.parameters_adam.keys():
-                self.parameters_adam[name_parameter] = [0, 0]  # 1-е список - истории 1-го и 2-го моментов
-                                                                    # 2-е значение  - номер итерации
+                self.parameters_adam[name_parameter] = [0, 0]  # history of the 1st и 2nd moments
             m = self.beta1 * self.parameters_adam[name_parameter][0] + (1 - self.beta1) * grad
             v = self.beta2 * self.parameters_adam[name_parameter][1] + (1 - self.beta2) * grad ** 2
             if self.nesterov:
