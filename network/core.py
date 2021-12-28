@@ -256,6 +256,11 @@ class FlattenLayer(Layer):
 class RecLayer(Layer):
 
     def __init__(self, n_units, name, activation='tanh'):
+        """
+        W shape = (prev_channels, self.n_units)
+        V, U shape = (self.n_units, self.n_units)
+        b, c shapes = (self.n_units,)
+        """
         self.n_units = n_units
         self.prev_channels = None
         self.weights_initializer = XavierWeights()
@@ -271,17 +276,22 @@ class RecLayer(Layer):
     def __call__(self, inputs):
 
         """
-        self.state_input = np.zeros((batch_size, timesteps, self.n_units))
-        self.states = np.zeros((batch_size, timesteps+1, self.n_units))
-        self.outputs = np.zeros((batch_size, timesteps, input_dim))
+        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
+        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
 
-        self.states[:, -1] = np.zeros((batch_size, self.n_units))
-        cycle with count of cells state:
-            h(t) = activation(weights_input @ inputs + weights_h @ h(t-1) + bias_h)
-            y(t) = softmax(weights_output @ h(t) + bias_y
+        concat_weights = np.concatenate([U, W], axis=0)
+
+        for t in range(inputs.shape[1]):
+            concat_input = np.concatenate([hidden_states[:, t-1], inputs[:, t]],axis=-1)
+
+            h = concat_input @ concat_weights + b[:, None]
+            hidden_states[:, t] = self.activation(h) if self.activation is not None else h
+
+            o = hidden_states[:, t] @ V + c[:, None]
+            outputs[:, t] = softmax(o)
         
-
-        return self.outputs
+        self.cache = (inputs, hidden_states, outputs)
+        return outputs
         """
         pass
 
@@ -303,29 +313,83 @@ class RecLayer(Layer):
     def get_gradients(self, dZ):
         """
 
-        _, timestaps, _ = dZ.shape (batch, timestaps,
+        _, seq_count, _ = dZ.shape  # (batch, seq_count, features)
+        dZ_next = np.zeros_like(dZ)
 
-        dW_inputs
-        dW_outputs
-        dW_state
+        inputs, hidden_states, outputs = self.cache
 
-        for i in reversed(range(timestaps)):
-            dW_outputs += dZ[:, t] @ self.states[:, t]
-            grad_wrt_state = dZ[:, t] @ (weights_output) * self.activation.backward(self.state_input[:, t])
-            accum_grad_next[:, t] = grad_wrt_state @ weights_input
-            for t_ in reversed(np.arange(max(0, t - self.bptt_trunc), t+1)):
-                dW_inputs += grad_wrt_state.T @ (self.layer_input[:, t_])
-                dW_state += grad_wrt_state.T @ dot(self.states[:, t_-1])
-                grad_wrt_state = (grad_wrt_state @ self.W) * self.activation.backward(self.state_input[:, t_-1])
+        dW = np.zeros_like(W)
+        dV = np.zeros_like(V)
+        dU = np.zeros_like(U)
+
+        dh_next = np.zeros_like(hidden_states[:, 0])
+
+        for t in reversed(range(seq_count)):
+
+            d_out = np.copy(dZ[:, t])
+            d_out = Softmax().derivative(d_out)
+
+            dV += np.swap_axes(hidden_states[:, t], 0, 1) @ d_out
+            dc += np.sum(d_out)
+
+            dh = np.swap_axes(V, 0, 1) @ d_out + dh_next
+            dh_rec = self.activation.derivative(hidden_states[:, t]) * dh
+
+            db += np.sum(dh_rec)
+            dW += np.swap_axes(inputs[:, t-1], 0, 1) @ dh_rec
+            dU += np.swap_axes(hidden_states[:, t-1], 0, 1) @ dh_rec
+
+            dh_next = np.swap_axes(U, 0, 1) @ dh_rec
+            dZ_next[:, t] = np.swap_axes(W, 0, 1) @ dh_rec
+
+        return dW, dU, db, dV, dc, dZ_next
         """
         pass
 
 
 class LSTM(Layer):
     def __init__(self):
+        """
+
+        W_i, W_f, W_c, W_0  shapes = (self.n_units + prev_shape, self.n_units)
+
+        b_i, b_f, b_c, b_o, c shapes = (self.n_units,)
+        V shape = (self.n_units, self.n_units)
+
+        """
         pass
 
     def __call__(self, inputs):
+        """
+
+        f_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+        i_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+        o_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+        c_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+
+        c_current_history = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
+        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
+        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+
+        for t in range(inputs.shape[1]):
+
+            concat_input = np.concatenate([hidden_states[:, t-1], inputs[:, t]],axis=-1)
+
+            i_history[:, t] = sigmoid(W_i @ concat_input + b_i)
+            f_history[:, t] = sigmoid(W_f @ concat_input + b_f)
+            c_history[:, t] = tanh(W_c @ concat_input + b_c)
+            o_history[:, t] = sigmoid(W_o @ concat_input + b_o)
+
+            c_current_history[:, t] = f_history[:, t] * c_current_history[:, t-1] + i_history[:, t] * c_history[:, t]
+            hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
+
+            o = hidden_states[:, t] @ V + c[:, None]
+            outputs[:, t] = softmax(o)
+
+        self.cache = (inputs, c_current_history, outputs, hidden_states, i_history, f_history, c_history, o_history)
+        return o_history
+
+        """
         pass
 
     def build_weights(self, prev_size):
@@ -338,17 +402,92 @@ class LSTM(Layer):
         pass
 
     def get_gradients(self, dZ):
+        """
+        _, seq_count, _ = dZ.shape
+        inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history = self.cache
+
+        dW_i, dW_f, dW_c. dW_o, dW_y = np.zeros_like(W_i), np.zeros_like(W_f), np.zeros_like(W_c), np.zeros_like(W_o),
+                                        np.zeros_like(W_y)
+
+        dh_next = np.zeros_like(hidden_states[:, 0])
+        dc_next = np.zeros_like(c_current_history[:, 0])
+
+        for t in reversed(range(seq_count)):
+
+            d_out = np.copy(dZ[:, t])
+            d_out = softmax.derivative(d_out)
+
+            dW_y += np.swap_axes(h, 0, 1) @ d_out
+            db_y += np.sum(d_out)
+
+            dh = d_out @ np.swap_axes(W_y, 0, 1) + dh_next
+
+            dho = tan_h(c) * dh
+            dho = sigmoid.derivative(o_history[:, t]) * dho
+
+            dc = ho * dh * tan_h.derivative(c)
+            dc += dc_next
+
+            dhf = c_current_history[:, t-1] * dc
+            dhf = sigmoid.derivative(f_history[:, t]) * dhf
+
+            dhi = hc * dc
+            dhi = sigmoid.derivative(i_history[:, t]) * dhi
+
+            dhc = hi * dc
+            dhc = tan_h.derivative(c_history[:, t]) * dhc
+
+            dW_f = np.swap_axes(inputs[:,t], 0, 1) @ dhf
+            db_f = dhf
+            dZ_f = dhf @ np.swap_axes(W_f, 0, 1)
+
+            dWi = np.swap_axes(inputs[:,t], 0, 1) @ dhi
+            dbi = dhi
+            dZ_i = dhi @ np.swap_axes(W_i, 0, 1)
+
+            dW_o = np.swap_axes(inputs[:,t], 0, 1) @ dho
+            db_o = dho
+            dZ_o = dho @ np.swap_axes(W_o, 0, 1)
+
+            dW_c = np.swap_axes(inputs[:,t], 0, 1) @ dhc
+            db_c = dhc
+            dZ_c = dhc @ np.swap_axes(W_c, 0, 1)
+
+            dZ_next = dZ_o + dZ_o + dZ_o + dZ_o
+            dh_next = dX[:, :H]
+            # Gradient for c_old in c = hf * c_old + hi * hc
+            dc_next = hf * dc
+
+
+
+
+        """
         pass
 
 
 class BiRecLayer(Layer):
     def __init__(self):
+        """
+                self.layer = RecLayer(name='BiRec_1')
+                self.layer2 = Rec_Layer(name='BiRec_2')
+                """
         pass
 
     def __call__(self, inputs):
+        """
+
+                output1 = self.layer(inputs)
+                output2 = self.layer2(inputs[:, ::-1])
+
+                return output1 + output2[:, ::-1]
+
+                """
         pass
 
     def build_weights(self, prev_size):
+        """
+             Useless
+             """
         pass
 
     def __str__(self):
@@ -366,9 +505,13 @@ class BiLSTM(Layer):
         pass
 
     def __call__(self, inputs):
+
         pass
 
     def build_weights(self, prev_size):
+        """
+        Useless
+        """
         pass
 
     def __str__(self):

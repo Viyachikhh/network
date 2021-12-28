@@ -97,10 +97,9 @@ class Softmax(Activation):
         return self._activation_(self.h)
 
     def _activation_(self, inputs):
-        exp_h = np.exp(inputs)
+        exp_h = np.exp(inputs - np.max(inputs))
         return exp_h / exp_h.sum(axis=0, keepdims=True)
 
     def derivative(self, other_input):
-        s = other_input.reshape(-1, 1)
-        return np.diagflat(s) - np.dot(s, s.T)
+        return other_input * (1 - other_input)
 
