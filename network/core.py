@@ -381,13 +381,11 @@ class LSTM(Layer):
             o_history[:, t] = sigmoid(W_o @ concat_input + b_o)
 
             c_current_history[:, t] = f_history[:, t] * c_current_history[:, t-1] + i_history[:, t] * c_history[:, t]
-            hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
+            hidden_states[:, t] = o_history[:, t] * tan_h(c_current_history[:, t])
 
-            o = hidden_states[:, t] @ V + c[:, None]
-            outputs[:, t] = softmax(o)
 
-        self.cache = (inputs, c_current_history, outputs, hidden_states, i_history, f_history, c_history, o_history)
-        return o_history
+        self.cache = (inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history)
+        return hidden_states
 
         """
         pass
@@ -406,57 +404,63 @@ class LSTM(Layer):
         _, seq_count, _ = dZ.shape
         inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history = self.cache
 
-        dW_i, dW_f, dW_c. dW_o, dW_y = np.zeros_like(W_i), np.zeros_like(W_f), np.zeros_like(W_c), np.zeros_like(W_o),
-                                        np.zeros_like(W_y)
+        dW_i, dW_f, dW_c. dW_o = np.zeros_like(W_i), np.zeros_like(W_f), np.zeros_like(W_c), np.zeros_like(W_o)
 
         dh_next = np.zeros_like(hidden_states[:, 0])
         dc_next = np.zeros_like(c_current_history[:, 0])
 
         for t in reversed(range(seq_count)):
 
-            d_out = np.copy(dZ[:, t])
-            d_out = softmax.derivative(d_out)
+            dh = np.copy(dZ[:, t])
 
-            dW_y += np.swap_axes(h, 0, 1) @ d_out
-            db_y += np.sum(d_out)
+            #----------------
 
-            dh = d_out @ np.swap_axes(W_y, 0, 1) + dh_next
+            dho[:, t] = tan_h(c_current_history[:, t]) * dh
+            dho[:, t] *= sigmoid.derivative(o_history[:, t])
 
-            dho = tan_h(c) * dh
-            dho = sigmoid.derivative(o_history[:, t]) * dho
 
-            dc = ho * dh * tan_h.derivative(c)
+            dW_o += np.swap_axes(inputs[:,t], 0, 1) @ dho
+            db_o += np.sum(dho, axis=1)
+            dZ_o[:, t] = dho @ np.swap_axes(W_o, 0, 1)
+
+            #----------------
+
+            dc  = ho * dh * tan_h.derivative(c_current_history[:, t])
             dc += dc_next
 
+            #----------------
+
             dhf = c_current_history[:, t-1] * dc
-            dhf = sigmoid.derivative(f_history[:, t]) * dhf
+            dhf *= sigmoid.derivative(f_history[:, t])
 
-            dhi = hc * dc
-            dhi = sigmoid.derivative(i_history[:, t]) * dhi
+            dW_f += np.swap_axes(inputs[:,t], 0, 1) @ dhf
+            db_f += np.sum(dhf, axis=1)
+            dZ_f[:, t] = dhf @ np.swap_axes(W_f, 0, 1)
 
-            dhc = hi * dc
-            dhc = tan_h.derivative(c_history[:, t]) * dhc
+            #----------------
 
-            dW_f = np.swap_axes(inputs[:,t], 0, 1) @ dhf
-            db_f = dhf
-            dZ_f = dhf @ np.swap_axes(W_f, 0, 1)
+            dhi = c_history[:, t] * dc
+            dhi *= sigmoid.derivative(i_history[:, t])
 
-            dWi = np.swap_axes(inputs[:,t], 0, 1) @ dhi
-            dbi = dhi
-            dZ_i = dhi @ np.swap_axes(W_i, 0, 1)
+            dW_i += np.swap_axes(inputs[:, t], 0, 1) @ dhi
+            db_i += np.sum(dhi, axis=1)
+            dZ_i[:, t] = dhi @ np.swap_axes(W_i, 0, 1)
 
-            dW_o = np.swap_axes(inputs[:,t], 0, 1) @ dho
-            db_o = dho
-            dZ_o = dho @ np.swap_axes(W_o, 0, 1)
+            #----------------
 
-            dW_c = np.swap_axes(inputs[:,t], 0, 1) @ dhc
-            db_c = dhc
-            dZ_c = dhc @ np.swap_axes(W_c, 0, 1)
+            dhc = i_history[:, t] * dc
+            dhc *= tan_h.derivative(c_history[:, t])
+
+            dW_c += np.swap_axes(inputs[:,t], 0, 1) @ dhc
+            db_c += np.sum(dhc, axis=1)
+            dZ_c[:, t] = dhc @ np.swap_axes(W_c, 0, 1)
+
+            #----------------------
 
             dZ_next = dZ_o + dZ_o + dZ_o + dZ_o
-            dh_next = dX[:, :H]
-            # Gradient for c_old in c = hf * c_old + hi * hc
-            dc_next = hf * dc
+
+
+            dc_next = f_history[:, t] * dc
 
 
 
