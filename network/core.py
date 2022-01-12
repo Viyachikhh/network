@@ -255,7 +255,7 @@ class FlattenLayer(Layer):
 
 class RecLayer(Layer):
 
-    def __init__(self, n_units, name, activation='tanh'):
+    def __init__(self, n_units, name, activation='tanh', return_seq=False):
         """
         W shape = (prev_channels, self.n_units)
         V, U shape = (self.n_units, self.n_units)
@@ -265,102 +265,145 @@ class RecLayer(Layer):
         self.prev_channels = None
         self.weights_initializer = XavierWeights()
         self.bias_initializer = ZerosInitializer()
+        self.return_seq = return_seq
+        self.expanding = False
 
         self.activation_name = activation
         self.activation = get_activation(self.activation_name)
         self.cache = None
         self.name = f'layer_{Layer.count}' if name is None else name
         Layer.count += 1
-        pass
 
     def __call__(self, inputs):
+        if 'U' not in vars(self).keys():
+            prev_size = inputs.shape[-1]
+            self.W, self.U, self.V, self.b, self.c = self.build_weights(prev_size)
 
-        """
         hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
         outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
 
-        concat_weights = np.concatenate([U, W], axis=0)
+        concat_weights = np.concatenate([self.U, self.W], axis=0)
+
+        if len(inputs.shape) == 2:
+            self.expanding = True
+            inputs = np.expand_dims(inputs, axis=-1)
 
         for t in range(inputs.shape[1]):
-            concat_input = np.concatenate([hidden_states[:, t-1], inputs[:, t]],axis=-1)
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
 
-            h = concat_input @ concat_weights + b[:, None]
+            h = concat_input @ concat_weights + self.b[:, None]
             hidden_states[:, t] = self.activation(h) if self.activation is not None else h
 
-            o = hidden_states[:, t] @ V + c[:, None]
-            outputs[:, t] = softmax(o)
-        
+            o = hidden_states[:, t] @ self.V + self.c[:, None]
+            outputs[:, t] = Softmax()(o)
+
         self.cache = (inputs, hidden_states, outputs)
-        return outputs
-        """
-        pass
+        return outputs[:, -1] if not self.return_seq else outputs
 
     def build_weights(self, prev_size):
-        """
-        Generate weights with considering of n_units and prev shape
-        """
-        pass
+        W = self.weights_initializer(prev_size, self.n_units, size=(prev_size, self.n_units))
+        U = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
+        V = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
+        b = self.bias_initializer(self.n_units, size=None)
+        c = self.bias_initializer(self.n_units, size=None)
+        return W, U, V, b, c
 
     def __str__(self):
         pass
 
     def update_weights(self, dZ, optimizer):
-        """
-        Update weights
-        """
-        pass
+        dW, dU, db, dV, dc, dZ_next = self.get_gradients(dZ)
+        parameters = optimizer.apply_gradients(self.name, {'gradW': dW, 'gradb': db,
+                                                           'gradV': dV, 'gradc': dc,
+                                                           'gradU': dU})
+        self.W += parameters['gradW']
+        self.V += parameters['gradV']
+        self.U += parameters['gradU']
+        self.b += parameters['gradb']
+        self.c += parameters['gradc']
+        return dZ_next
 
     def get_gradients(self, dZ):
-        """
 
-        _, seq_count, _ = dZ.shape  # (batch, seq_count, features)
-        dZ_next = np.zeros_like(dZ)
+        only_one = True
+
+        inputs, hidden_states, outputs = self.cache
+        seq_count = inputs.shape[1]
+
+        dZ_next = np.zeros_like(inputs)
 
         inputs, hidden_states, outputs = self.cache
 
-        dW = np.zeros_like(W)
-        dV = np.zeros_like(V)
-        dU = np.zeros_like(U)
+        dW = np.zeros_like(self.W)
+        dV = np.zeros_like(self.V)
+        dU = np.zeros_like(self.U)
+        db = np.zeros_like(self.b)
+        dc = np.zeros_like(self.c)
 
         dh_next = np.zeros_like(hidden_states[:, 0])
 
         for t in reversed(range(seq_count)):
 
-            d_out = np.copy(dZ[:, t])
-            d_out = Softmax().derivative(d_out)
+            if only_one:
+                if self.return_seq:
+                    d_out = np.copy(dZ[:, t])
+                else:
+                    d_out = np.copy(dZ)
+
+                d_out = Softmax().derivative(d_out)
+
+                if self.return_seq:
+                    only_one = False
+            else:
+                d_out = np.zeros_like(d_out)
 
             dV += np.swap_axes(hidden_states[:, t], 0, 1) @ d_out
             dc += np.sum(d_out)
 
-            dh = np.swap_axes(V, 0, 1) @ d_out + dh_next
+            dh = np.swap_axes(self.V, 0, 1) @ d_out + dh_next
             dh_rec = self.activation.derivative(hidden_states[:, t]) * dh
 
             db += np.sum(dh_rec)
-            dW += np.swap_axes(inputs[:, t-1], 0, 1) @ dh_rec
-            dU += np.swap_axes(hidden_states[:, t-1], 0, 1) @ dh_rec
+            dW += np.swap_axes(inputs[:, t], 0, 1) @ dh_rec
+            dU += np.swap_axes(hidden_states[:, t - 1], 0, 1) @ dh_rec
 
-            dh_next = np.swap_axes(U, 0, 1) @ dh_rec
-            dZ_next[:, t] = np.swap_axes(W, 0, 1) @ dh_rec
+            dh_next = np.swap_axes(self.U, 0, 1) @ dh_rec
+            dZ_next[:, t] = np.swap_axes(self.W, 0, 1) @ dh_rec
+
+        if self.expanding:
+            dZ_next = dZ_next[:, :, 0]
 
         return dW, dU, db, dV, dc, dZ_next
-        """
-        pass
 
 
 class LSTM(Layer):
-    def __init__(self):
+    def __init__(self, n_units, name, activation='tanh', return_seq=False):
         """
 
         W_i, W_f, W_c, W_0  shapes = (self.n_units + prev_shape, self.n_units)
 
         b_i, b_f, b_c, b_o, c shapes = (self.n_units,)
-        V shape = (self.n_units, self.n_units)
 
         """
-        pass
+        self.n_units = n_units
+        self.prev_channels = None
+        self.weights_initializer = XavierWeights()
+        self.bias_initializer = ZerosInitializer()
+        self.return_seq = return_seq
+        self.expanding = False
+
+        self.activation_name = activation
+        self.activation = get_activation(self.activation_name)
+        self.cache = None
+        self.name = f'layer_{Layer.count}' if name is None else name
+        Layer.count += 1
 
     def __call__(self, inputs):
-        """
+
+        if 'W_i' not in vars(self).keys():
+            prev_size = inputs.shape[-1]
+            self.W_i, self.W_f, self.W_c, self.W_o, \
+                self.b_i, self.b_f, self.b_c, self.b_o = self.build_weights(prev_size)
 
         f_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         i_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
@@ -369,29 +412,34 @@ class LSTM(Layer):
 
         c_current_history = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
         hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
-        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+
+        sigmoid = Sigmoid()
+        tanh = Tanh()
 
         for t in range(inputs.shape[1]):
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
 
-            concat_input = np.concatenate([hidden_states[:, t-1], inputs[:, t]],axis=-1)
+            i_history[:, t] = sigmoid(self.W_i @ concat_input + self.b_i)
+            f_history[:, t] = sigmoid(self.W_f @ concat_input + self.b_f)
+            c_history[:, t] = tanh(self.W_c @ concat_input + self.b_c)
+            o_history[:, t] = sigmoid(self.W_o @ concat_input + self.b_o)
 
-            i_history[:, t] = sigmoid(W_i @ concat_input + b_i)
-            f_history[:, t] = sigmoid(W_f @ concat_input + b_f)
-            c_history[:, t] = tanh(W_c @ concat_input + b_c)
-            o_history[:, t] = sigmoid(W_o @ concat_input + b_o)
-
-            c_current_history[:, t] = f_history[:, t] * c_current_history[:, t-1] + i_history[:, t] * c_history[:, t]
-            hidden_states[:, t] = o_history[:, t] * tan_h(c_current_history[:, t])
-
+            c_current_history[:, t] = f_history[:, t] * c_current_history[:, t - 1] + i_history[:, t] * c_history[:, t]
+            hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
 
         self.cache = (inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history)
-        return hidden_states
-
-        """
-        pass
+        return hidden_states[:, -1] if not self.return_seq else hidden_states
 
     def build_weights(self, prev_size):
-        pass
+        W_i = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        W_f = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        W_c = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        W_o = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        b_i = self.bias_initializer(self.n_units, size=None)
+        b_f = self.bias_initializer(self.n_units, size=None)
+        b_c = self.bias_initializer(self.n_units, size=None)
+        b_o = self.bias_initializer(self.n_units, size=None)
+        return W_i, W_f, W_c, W_o, b_i, b_f, b_c, b_o
 
     def __str__(self):
         pass
@@ -411,7 +459,7 @@ class LSTM(Layer):
 
         for t in reversed(range(seq_count)):
 
-            dh = np.copy(dZ[:, t])
+            dh = np.copy(dZ[:, t]) + dh_next
 
             #----------------
 
@@ -457,7 +505,7 @@ class LSTM(Layer):
 
             #----------------------
 
-            dZ_next = dZ_o + dZ_o + dZ_o + dZ_o
+            dZ_next = dZ_i + dZ_f + dZ_o + dZ_c
 
 
             dc_next = f_history[:, t] * dc
@@ -509,7 +557,6 @@ class BiLSTM(Layer):
         pass
 
     def __call__(self, inputs):
-
         pass
 
     def build_weights(self, prev_size):
