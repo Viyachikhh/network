@@ -67,11 +67,11 @@ class DenseLayer(Layer):
         elif self.activation is not None:
             derivative *= self.activation.derivative(self.cache[1])
 
-        gradW, gradb, gradZ = self.get_gradients(derivative)
-        parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
-        self.weights += parameters['gradW']
-        self.bias += parameters['gradb']
-        return gradZ
+        dW, db, dZ_next = self.get_gradients(derivative)
+        parameters = optimizer.apply_gradients(self.name, {'dW': dW, 'db': db})
+        self.weights += parameters['dW']
+        self.bias += parameters['db']
+        return dZ_next
 
     def get_gradients(self, dZ):
         db = (1 / self.cache[0].shape[1]) * dZ.sum(axis=1)
@@ -133,7 +133,7 @@ class Conv2DLayer(Layer):
         windows = getWindows(inputs, (inputs.shape[0], self.weights.shape[0], height_output, width_output),
                              filter_size=self.weights.shape[2], padding=self.padding_size[0], stride=self.stride)
 
-        Z = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)  # свёртка входных данных с фильтром
+        Z = np.einsum('ijklmn, ojmn -> iokl', windows, self.weights)  # conv inputs with filter
         Z += self.bias[None, :, None, None]
 
         result = Z if (self.activation_name is None or self.activation_name not in AVAILABLE_ACTIVATIONS) \
@@ -159,11 +159,11 @@ class Conv2DLayer(Layer):
         derivative = dZ
         if self.activation is not None:
             derivative *= self.activation.derivative(self.cache[2])
-        gradW, gradb, gradZ = self.get_gradients(derivative)
-        parameters = optimizer.apply_gradients(self.name, {'gradW': gradW, 'gradb': gradb})
-        self.weights += parameters['gradW']
-        self.bias += parameters['gradb']
-        return gradZ
+        dW, db, dZ_next = self.get_gradients(derivative)
+        parameters = optimizer.apply_gradients(self.name, {'dW': dW, 'db': db})
+        self.weights += parameters['dW']
+        self.bias += parameters['db']
+        return dZ_next
 
     def __str__(self):
         return f'Conv_layer with filter_size = {self.weights.shape[2]} and count_filters = {self.weights.shape[0]}'
@@ -255,7 +255,7 @@ class FlattenLayer(Layer):
 
 class RecLayer(Layer):
 
-    def __init__(self, n_units, name, activation='tanh', return_seq=False):
+    def __init__(self, n_units, name=None, activation='tanh', return_seq=False):
         """
         W shape = (prev_channels, self.n_units)
         V, U shape = (self.n_units, self.n_units)
@@ -291,14 +291,15 @@ class RecLayer(Layer):
         for t in range(inputs.shape[1]):
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
 
-            h = concat_input @ concat_weights + self.b[:, None]
+            h = concat_input @ concat_weights + self.b
+
             hidden_states[:, t] = self.activation(h) if self.activation is not None else h
 
-            o = hidden_states[:, t] @ self.V + self.c[:, None]
+            o = hidden_states[:, t] @ self.V + self.c
             outputs[:, t] = Softmax()(o)
 
         self.cache = (inputs, hidden_states, outputs)
-        return outputs[:, -1] if not self.return_seq else outputs
+        return np.swapaxes(outputs[:, -1], 0, 1) if not self.return_seq else outputs
 
     def build_weights(self, prev_size):
         W = self.weights_initializer(prev_size, self.n_units, size=(prev_size, self.n_units))
@@ -313,14 +314,14 @@ class RecLayer(Layer):
 
     def update_weights(self, dZ, optimizer):
         dW, dU, db, dV, dc, dZ_next = self.get_gradients(dZ)
-        parameters = optimizer.apply_gradients(self.name, {'gradW': dW, 'gradb': db,
-                                                           'gradV': dV, 'gradc': dc,
-                                                           'gradU': dU})
-        self.W += parameters['gradW']
-        self.V += parameters['gradV']
-        self.U += parameters['gradU']
-        self.b += parameters['gradb']
-        self.c += parameters['gradc']
+        parameters = optimizer.apply_gradients(self.name, {'dW': dW, 'db': db,
+                                                           'dV': dV, 'dc': dc,
+                                                           'dU': dU})
+        self.W += parameters['dW']
+        self.V += parameters['dV']
+        self.U += parameters['dU']
+        self.b += parameters['db']
+        self.c += parameters['dc']
         return dZ_next
 
     def get_gradients(self, dZ):
@@ -341,6 +342,7 @@ class RecLayer(Layer):
         dc = np.zeros_like(self.c)
 
         dh_next = np.zeros_like(hidden_states[:, 0])
+        d_out = None
 
         for t in reversed(range(seq_count)):
 
@@ -348,7 +350,7 @@ class RecLayer(Layer):
                 if self.return_seq:
                     d_out = np.copy(dZ[:, t])
                 else:
-                    d_out = np.copy(dZ)
+                    d_out = np.swapaxes(np.copy(dZ), 0, 1)
 
                 d_out = Softmax().derivative(d_out)
 
@@ -357,18 +359,19 @@ class RecLayer(Layer):
             else:
                 d_out = np.zeros_like(d_out)
 
-            dV += np.swap_axes(hidden_states[:, t], 0, 1) @ d_out
-            dc += np.sum(d_out)
+            dV += np.swapaxes(hidden_states[:, t], 0, 1) @ d_out
+            dc += np.sum(d_out, axis=0)
 
-            dh = np.swap_axes(self.V, 0, 1) @ d_out + dh_next
+            dh = d_out @ np.swapaxes(self.V, 0, 1) + dh_next
             dh_rec = self.activation.derivative(hidden_states[:, t]) * dh
 
-            db += np.sum(dh_rec)
-            dW += np.swap_axes(inputs[:, t], 0, 1) @ dh_rec
-            dU += np.swap_axes(hidden_states[:, t - 1], 0, 1) @ dh_rec
+            db += np.sum(dh_rec, axis=0)
 
-            dh_next = np.swap_axes(self.U, 0, 1) @ dh_rec
-            dZ_next[:, t] = np.swap_axes(self.W, 0, 1) @ dh_rec
+            dW += np.swapaxes(inputs[:, t], 0, 1) @ dh_rec
+            dU += np.swapaxes(hidden_states[:, t+1], 0, 1) @ dh_rec
+
+            dh_next = dh_rec @ np.swapaxes(self.U, 0, 1)
+            dZ_next[:, t] = dh_rec @ np.swapaxes(self.W, 0, 1)
 
         if self.expanding:
             dZ_next = dZ_next[:, :, 0]
@@ -381,8 +384,8 @@ class LSTM(Layer):
         """
 
         W_i, W_f, W_c, W_0  shapes = (self.n_units + prev_shape, self.n_units)
-
-        b_i, b_f, b_c, b_o, c shapes = (self.n_units,)
+        W_y shape = (self.units, self.units)
+        b_i, b_f, b_c, b_o, b_y shapes = (self.n_units,)
 
         """
         self.n_units = n_units
@@ -402,174 +405,213 @@ class LSTM(Layer):
 
         if 'W_i' not in vars(self).keys():
             prev_size = inputs.shape[-1]
-            self.W_i, self.W_f, self.W_c, self.W_o, \
-                self.b_i, self.b_f, self.b_c, self.b_o = self.build_weights(prev_size)
+            self.W_i, self.W_f, self.W_c, self.W_o, self.W_y, \
+                self.b_i, self.b_f, self.b_c, self.b_o, self.b_y = self.build_weights(prev_size)
+
+        if len(inputs.shape) == 2:
+            self.expanding = True
+            inputs = np.expand_dims(inputs, axis=-1)
 
         f_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         i_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         o_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         c_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
 
+        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+
         c_current_history = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
         hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
 
         sigmoid = Sigmoid()
         tanh = Tanh()
+        softmax = Softmax()
 
         for t in range(inputs.shape[1]):
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
 
-            i_history[:, t] = sigmoid(self.W_i @ concat_input + self.b_i)
-            f_history[:, t] = sigmoid(self.W_f @ concat_input + self.b_f)
-            c_history[:, t] = tanh(self.W_c @ concat_input + self.b_c)
-            o_history[:, t] = sigmoid(self.W_o @ concat_input + self.b_o)
+            i_history[:, t] = sigmoid(concat_input @ self.W_i + self.b_i)
+            f_history[:, t] = sigmoid(concat_input @ self.W_f + self.b_f)
+            c_history[:, t] = tanh(concat_input @ self.W_c + self.b_c)
+            o_history[:, t] = sigmoid(concat_input @ self.W_o + self.b_o)
 
             c_current_history[:, t] = f_history[:, t] * c_current_history[:, t - 1] + i_history[:, t] * c_history[:, t]
             hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
 
+            outputs[:, t] = softmax(hidden_states[:, t] @ self.W_y + self.b_y)
+
         self.cache = (inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history)
-        return hidden_states[:, -1] if not self.return_seq else hidden_states
+        return np.swapaxes(outputs[:, -1], 0, 1) if not self.return_seq else outputs
 
     def build_weights(self, prev_size):
         W_i = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_f = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_c = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_o = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        W_y = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
         b_i = self.bias_initializer(self.n_units, size=None)
         b_f = self.bias_initializer(self.n_units, size=None)
         b_c = self.bias_initializer(self.n_units, size=None)
         b_o = self.bias_initializer(self.n_units, size=None)
-        return W_i, W_f, W_c, W_o, b_i, b_f, b_c, b_o
+        b_y = self.bias_initializer(self.n_units, size=None)
+        return W_i, W_f, W_c, W_o, W_y, b_i, b_f, b_c, b_o, b_y
 
     def __str__(self):
         pass
 
     def update_weights(self, dZ, optimizer):
-        pass
+
+        dW_i, dW_f, dW_c, dW_o, dW_y, db_i, db_f, db_c, db_o, db_y, dZ_next = self.get_gradients(dZ)
+        parameters = optimizer.apply_gradients(self.name, {'dW_i': dW_i, 'db_i': db_i,
+                                                           'dW_f': dW_f, 'db_f': db_f,
+                                                           'dW_c': dW_c, 'db_c': db_c,
+                                                           'dW_o': dW_o, 'db_o': db_o,
+                                                           'dW_y': dW_y, 'db_y': db_y})
+        self.W_i += parameters['dW_i']
+        self.W_f += parameters['dW_f']
+        self.W_c += parameters['dW_c']
+        self.W_o += parameters['dW_o']
+        self.W_y += parameters['dW_y']
+        self.b_i += parameters['db_i']
+        self.b_f += parameters['db_f']
+        self.b_c += parameters['db_c']
+        self.b_o += parameters['db_o']
+        self.b_y += parameters['db_y']
+        return dZ_next
 
     def get_gradients(self, dZ):
-        """
-        _, seq_count, _ = dZ.shape
-        inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history = self.cache
 
-        dW_i, dW_f, dW_c. dW_o = np.zeros_like(W_i), np.zeros_like(W_f), np.zeros_like(W_c), np.zeros_like(W_o)
+        inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history = self.cache
+        seq_count = inputs.shape[1]
+
+        dW_i, dW_f, dW_c, dW_o, dW_y = np.zeros_like(self.W_i), np.zeros_like(self.W_f), np.zeros_like(
+            self.W_c), np.zeros_like(self.W_o), np.zeros_like(self.W_y)
+        db_i, db_f, db_c, db_o, db_y = np.zeros_like(self.b_i), np.zeros_like(self.b_f), np.zeros_like(
+            self.b_c), np.zeros_like(self.b_o), np.zeros_like(self.b_y)
+        only_one = True
+
+        sigmoid = Sigmoid()
+        tan_h = Tanh()
+        softmax = Softmax()
+
+        d_out = None
 
         dh_next = np.zeros_like(hidden_states[:, 0])
         dc_next = np.zeros_like(c_current_history[:, 0])
+        dZ_next = np.zeros_like(inputs)
 
         for t in reversed(range(seq_count)):
 
-            dh = np.copy(dZ[:, t]) + dh_next
+            if only_one:
+                if self.return_seq:
+                    d_out = np.copy(dZ[:, t])
+                else:
+                    d_out = np.swapaxes(np.copy(dZ), 0, 1)
 
-            #----------------
+                d_out = softmax.derivative(d_out)
 
-            dho[:, t] = tan_h(c_current_history[:, t]) * dh
-            dho[:, t] *= sigmoid.derivative(o_history[:, t])
+                if self.return_seq:
+                    only_one = False
+            else:
+                d_out = np.zeros_like(d_out)
 
+            dW_y += np.swapaxes(hidden_states[:, t], 0, 1) @ d_out
+            db_y += np.sum(d_out)
 
-            dW_o += np.swap_axes(inputs[:,t], 0, 1) @ dho
-            db_o += np.sum(dho, axis=1)
-            dZ_o[:, t] = dho @ np.swap_axes(W_o, 0, 1)
+            dh = d_out @ np.swapaxes(self.W_y, 0, 1) + dh_next
 
-            #----------------
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
+            # ----------------
+            dho = tan_h(c_current_history[:, t]) * dh
+            dho *= sigmoid.derivative(o_history[:, t])
 
-            dc  = ho * dh * tan_h.derivative(c_current_history[:, t])
+            dW_o += np.swapaxes(concat_input, 0, 1) @ dho
+            db_o += np.sum(dho, axis=0)
+            dZ_o = dho @ np.swapaxes(self.W_o, 0, 1)
+
+            # ----------------
+
+            dc = o_history[:, t] * dh * tan_h.derivative(c_current_history[:, t])
             dc += dc_next
 
-            #----------------
+            # ----------------
 
-            dhf = c_current_history[:, t-1] * dc
+            dhf = c_current_history[:, t - 1] * dc
             dhf *= sigmoid.derivative(f_history[:, t])
 
-            dW_f += np.swap_axes(inputs[:,t], 0, 1) @ dhf
-            db_f += np.sum(dhf, axis=1)
-            dZ_f[:, t] = dhf @ np.swap_axes(W_f, 0, 1)
+            dW_f += np.swapaxes(concat_input, 0, 1) @ dhf
+            db_f += np.sum(dhf, axis=0)
+            dZ_f = dhf @ np.swapaxes(self.W_f, 0, 1)
 
-            #----------------
+            # ----------------
 
             dhi = c_history[:, t] * dc
             dhi *= sigmoid.derivative(i_history[:, t])
 
-            dW_i += np.swap_axes(inputs[:, t], 0, 1) @ dhi
-            db_i += np.sum(dhi, axis=1)
-            dZ_i[:, t] = dhi @ np.swap_axes(W_i, 0, 1)
+            dW_i += np.swapaxes(concat_input, 0, 1) @ dhi
+            db_i += np.sum(dhi, axis=0)
+            dZ_i = dhi @ np.swapaxes(self.W_i, 0, 1)
 
-            #----------------
+            # ----------------
 
             dhc = i_history[:, t] * dc
             dhc *= tan_h.derivative(c_history[:, t])
 
-            dW_c += np.swap_axes(inputs[:,t], 0, 1) @ dhc
-            db_c += np.sum(dhc, axis=1)
-            dZ_c[:, t] = dhc @ np.swap_axes(W_c, 0, 1)
+            dW_c += np.swapaxes(concat_input, 0, 1) @ dhc
+            db_c += np.sum(dhc, axis=0)
+            dZ_c = dhc @ np.swapaxes(self.W_c, 0, 1)
 
-            #----------------------
+            # ----------------------
 
-            dZ_next = dZ_i + dZ_f + dZ_o + dZ_c
+            d_concat = dZ_i + dZ_f + dZ_o + dZ_c
 
+            dZ_next[:, t] = d_concat[:, self.n_units:]
+
+            dh_next = d_concat[:, :self.n_units]
 
             dc_next = f_history[:, t] * dc
 
+        if self.expanding:
+            dZ_next = dZ_next[:, :, 0]
+
+        return dW_i, dW_f, dW_c, dW_o, dW_y, db_i, db_f, db_c, db_o, db_y, dZ_next
 
 
+class Bidirectional(Layer):
+    def __init__(self, base_layer, mode='sum'):
 
-        """
-        pass
+        self.common_layer = base_layer
+        self.common_layer.name += '_past_based'
 
+        self.reverse_layer = base_layer
+        self.reverse_layer.name += '_future_based'
 
-class BiRecLayer(Layer):
-    def __init__(self):
-        """
-                self.layer = RecLayer(name='BiRec_1')
-                self.layer2 = Rec_Layer(name='BiRec_2')
-                """
-        pass
+        self.mode = mode
 
     def __call__(self, inputs):
-        """
-
-                output1 = self.layer(inputs)
-                output2 = self.layer2(inputs[:, ::-1])
-
-                return output1 + output2[:, ::-1]
-
-                """
-        pass
+        past_based_output = self.common_layer(inputs)
+        future_based_output = self.reverse_layer(inputs[:, ::-1])
+        return past_based_output + future_based_output[:, ::-1] if self.mode == 'sum' else \
+            np.concatenate([past_based_output, future_based_output[:, ::-1]], axis=1)
 
     def build_weights(self, prev_size):
-        """
-             Useless
-             """
         pass
 
     def __str__(self):
         pass
 
     def update_weights(self, dZ, optimizer):
-        pass
 
-    def get_gradients(self, dZ):
-        pass
+        if self.mode == 'sum':
+            dZ_past = dZ
+            dZ_future = dZ[:, ::-1]
+        else:
+            dZ_past = dZ[:, :dZ.shape[1] // 2]
+            dZ_future = dZ[:, dZ.shape[1] // 2:]
 
+        dZ_1_next = self.common_layer.update_weights(dZ_past, optimizer)
+        dZ_2_next = self.reverse_layer.update_weights(dZ_future, optimizer)
 
-class BiLSTM(Layer):
-    def __init__(self):
-        pass
-
-    def __call__(self, inputs):
-        pass
-
-    def build_weights(self, prev_size):
-        """
-        Useless
-        """
-        pass
-
-    def __str__(self):
-        pass
-
-    def update_weights(self, dZ, optimizer):
-        pass
+        return dZ_1_next + dZ_2_next[:, ::-1]
 
     def get_gradients(self, dZ):
         pass
@@ -603,7 +645,7 @@ class NeuralNetwork:
         for i in range(len(layers)):
             self.layers_dict[f'layer_{i + cur_length}'] = layers[i]
 
-    def fit(self, data, labels, count_epochs=200, size_of_batch=32, val=None):
+    def fit(self, data, labels, count_epochs=200, size_of_batch=32, validation_set=None):
         train_loss = []
         valid_loss = []
 
@@ -611,19 +653,20 @@ class NeuralNetwork:
             rand_int = np.random.randint(data.shape[0], size=size_of_batch)  # generate random examples
             print(f'epoch {epoch + 1}')
             start = default_timer()
-            pred = self(data[rand_int])
+            predictions = self(data[rand_int])
             print(f'time = {default_timer() - start}')
-            loss = self.loss.calculate_loss(labels[rand_int].T, pred)
+            loss = self.loss.calculate_loss(labels[rand_int].T, predictions)
             self.back_propagation()
             print(f'loss = {loss}', end=', ')
             train_loss.append(loss)
-            if val is not None:  # on validation
-                val_pred = self(val[0])
-                val_loss = self.loss.calculate_loss(val[1].T, val_pred, without_memory=True)
+            if validation_set is not None:  # on validation
+                val_prediction = self(validation_set[0])
+                val_loss = self.loss.calculate_loss(validation_set[1].T, val_prediction, without_memory=True)
                 valid_loss.append(val_loss)
                 print(f'validation loss = {val_loss}')
-                test_real = np.argmax(val[1].T, axis=0)
-                test_pred = np.argmax(val_pred, axis=0)
-                print(f'accuracy = {np.mean(test_pred == test_real)} ')
+                test_real = np.argmax(validation_set[1].T, axis=0)
+                test_prediction = np.argmax(val_prediction, axis=0)
+                print(f'accuracy = {np.mean(test_prediction == test_real)} ')
 
-        return train_loss, valid_loss if val is not None else train_loss
+        return train_loss, valid_loss if validation_set is not None else train_loss
+
