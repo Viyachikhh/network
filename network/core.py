@@ -286,7 +286,7 @@ class RecLayer(Layer):
 
         if len(inputs.shape) == 2:
             self.expanding = True
-            inputs = np.expand_dims(inputs, axis=-1)
+            inputs = np.expand_dims(inputs, axis=1)
 
         for t in range(inputs.shape[1]):
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
@@ -374,7 +374,7 @@ class RecLayer(Layer):
             dZ_next[:, t] = dh_rec @ np.swapaxes(self.W, 0, 1)
 
         if self.expanding:
-            dZ_next = dZ_next[:, :, 0]
+            dZ_next = dZ_next[:, 0]
 
         return dW, dU, db, dV, dc, dZ_next
 
@@ -410,7 +410,7 @@ class LSTM(Layer):
 
         if len(inputs.shape) == 2:
             self.expanding = True
-            inputs = np.expand_dims(inputs, axis=-1)
+            inputs = np.expand_dims(inputs, axis=1)
 
         f_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         i_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
@@ -515,7 +515,7 @@ class LSTM(Layer):
                 d_out = np.zeros_like(d_out)
 
             dW_y += np.swapaxes(hidden_states[:, t], 0, 1) @ d_out
-            db_y += np.sum(d_out)
+            db_y += np.sum(d_out, axis=0)
 
             dh = d_out @ np.swapaxes(self.W_y, 0, 1) + dh_next
 
@@ -571,7 +571,7 @@ class LSTM(Layer):
             dc_next = f_history[:, t] * dc
 
         if self.expanding:
-            dZ_next = dZ_next[:, :, 0]
+            dZ_next = dZ_next[:, 0]
 
         return dW_i, dW_f, dW_c, dW_o, dW_y, db_i, db_f, db_c, db_o, db_y, dZ_next
 

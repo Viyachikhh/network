@@ -1,33 +1,26 @@
-# Установка пакета network
+# Package installing
 
-1) Скачиваете с репозитория
+1) Download from repository
 
-2) Создаёте venv
+2) Create venv
 
-3) Внутри venv прописываете pip install "путь до скачанного пакета"
+3) Inside venv write command: pip install <path_to_repository>
 
-# Мини-обзор
+# Watching
 
-1)Два модуля: core, load.
+Modules: 
 
-2)В core написана сама сеть (объект NeuralNetwork) и слои DenseLayer, ConvLayer, MaxPoolingLayer, FlattenLayer
+1) core - module with layers and NeuralNetwork object. There are fully connected layer, convolution layer and max pooling ( only 2D), Flatten and rnn layers (base recurrent and LSTM).
 
-3)В load, чтобы не делать много работы, скачиваются данные с mnist и предобрабатываются (поэтому в setup.py mnist и 
-указан в зависимостях, не лучшее решение, но может кому-то будет от этого легче)
+2) intializers - module with random weights initializers for layers.
 
-# Пояснение
+3) activations - module with activations for layers.
 
-1) Архитектура сети:
+4) losses - module with losses for neural networks.
 
- а) Входные данные - можно как список развёрнутых картинок, так и сами картинки
+5) utils - module for some custom thing for other modules.
 
- б) Переменное количество слоёв, теперь никаких параметров, в конструктор передаются слои
-
- в) Вы можете строить любую архитектуру свёрточной сети, которую вы захотите (конечно, всё ещё стоит следить за корректными входными данными)
-
-2) Инициализация весов в слоях - равномерное распределение( в будущем возможно большее количество различных инициализаций)
-
-3) Также, в будущем возможно большее количество алгоритмов оптимизации нейронных сетей
+6) load - module for fast loading MNIST dataset if you want to check workability of convolution layers.
 
 
 
