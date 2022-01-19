@@ -276,19 +276,21 @@ class RecLayer(Layer):
 
     def __call__(self, inputs):
         if 'U' not in vars(self).keys():
-            prev_size = inputs.shape[-1]
+            prev_size = inputs.shape[-1] if self.return_seq else inputs.shape[0]
             self.W, self.U, self.V, self.b, self.c = self.build_weights(prev_size)
-
-        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
-        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
 
         concat_weights = np.concatenate([self.U, self.W], axis=0)
 
         if len(inputs.shape) == 2:
+            inputs = np.swapaxes(inputs, 0, 1)
             self.expanding = True
             inputs = np.expand_dims(inputs, axis=1)
 
+        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
+        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+
         for t in range(inputs.shape[1]):
+
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
 
             h = concat_input @ concat_weights + self.b
@@ -374,19 +376,17 @@ class RecLayer(Layer):
             dZ_next[:, t] = dh_rec @ np.swapaxes(self.W, 0, 1)
 
         if self.expanding:
-            dZ_next = dZ_next[:, 0]
+            dZ_next = np.swapaxes(dZ_next[:, 0], 0, 1)
 
         return dW, dU, db, dV, dc, dZ_next
 
 
 class LSTM(Layer):
-    def __init__(self, n_units, name, activation='tanh', return_seq=False):
+    def __init__(self, n_units, name=None, activation='tanh', return_seq=False):
         """
-
         W_i, W_f, W_c, W_0  shapes = (self.n_units + prev_shape, self.n_units)
         W_y shape = (self.units, self.units)
         b_i, b_f, b_c, b_o, b_y shapes = (self.n_units,)
-
         """
         self.n_units = n_units
         self.prev_channels = None
@@ -404,11 +404,12 @@ class LSTM(Layer):
     def __call__(self, inputs):
 
         if 'W_i' not in vars(self).keys():
-            prev_size = inputs.shape[-1]
-            self.W_i, self.W_f, self.W_c, self.W_o, self.W_y, \
-                self.b_i, self.b_f, self.b_c, self.b_o, self.b_y = self.build_weights(prev_size)
+            prev_size = inputs.shape[-1] if self.return_seq else inputs.shape[0]
+            self.W_i, self.W_f, self.W_c, self.W_o, \
+                self.b_i, self.b_f, self.b_c, self.b_o = self.build_weights(prev_size)
 
         if len(inputs.shape) == 2:
+            inputs = np.swapaxes(inputs, 0, 1)
             self.expanding = True
             inputs = np.expand_dims(inputs, axis=1)
 
@@ -417,14 +418,11 @@ class LSTM(Layer):
         o_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
         c_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
 
-        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
-
         c_current_history = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
         hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
 
         sigmoid = Sigmoid()
         tanh = Tanh()
-        softmax = Softmax()
 
         for t in range(inputs.shape[1]):
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
@@ -437,45 +435,40 @@ class LSTM(Layer):
             c_current_history[:, t] = f_history[:, t] * c_current_history[:, t - 1] + i_history[:, t] * c_history[:, t]
             hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
 
-            outputs[:, t] = softmax(hidden_states[:, t] @ self.W_y + self.b_y)
-
         self.cache = (inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history)
-        return np.swapaxes(outputs[:, -1], 0, 1) if not self.return_seq else outputs
+        return np.swapaxes(hidden_states[:, -1], 0, 1) if not self.return_seq else hidden_states[:, :-1]
 
     def build_weights(self, prev_size):
         W_i = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_f = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_c = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
         W_o = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
-        W_y = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
         b_i = self.bias_initializer(self.n_units, size=None)
         b_f = self.bias_initializer(self.n_units, size=None)
         b_c = self.bias_initializer(self.n_units, size=None)
         b_o = self.bias_initializer(self.n_units, size=None)
-        b_y = self.bias_initializer(self.n_units, size=None)
-        return W_i, W_f, W_c, W_o, W_y, b_i, b_f, b_c, b_o, b_y
+
+        return W_i, W_f, W_c, W_o, b_i, b_f, b_c, b_o
 
     def __str__(self):
         pass
 
     def update_weights(self, dZ, optimizer):
 
-        dW_i, dW_f, dW_c, dW_o, dW_y, db_i, db_f, db_c, db_o, db_y, dZ_next = self.get_gradients(dZ)
+        dW_i, dW_f, dW_c, dW_o, db_i, db_f, db_c, db_o, dZ_next = self.get_gradients(dZ)
         parameters = optimizer.apply_gradients(self.name, {'dW_i': dW_i, 'db_i': db_i,
                                                            'dW_f': dW_f, 'db_f': db_f,
                                                            'dW_c': dW_c, 'db_c': db_c,
-                                                           'dW_o': dW_o, 'db_o': db_o,
-                                                           'dW_y': dW_y, 'db_y': db_y})
+                                                           'dW_o': dW_o, 'db_o': db_o})
         self.W_i += parameters['dW_i']
         self.W_f += parameters['dW_f']
         self.W_c += parameters['dW_c']
         self.W_o += parameters['dW_o']
-        self.W_y += parameters['dW_y']
         self.b_i += parameters['db_i']
         self.b_f += parameters['db_f']
         self.b_c += parameters['db_c']
         self.b_o += parameters['db_o']
-        self.b_y += parameters['db_y']
+
         return dZ_next
 
     def get_gradients(self, dZ):
@@ -483,15 +476,14 @@ class LSTM(Layer):
         inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history = self.cache
         seq_count = inputs.shape[1]
 
-        dW_i, dW_f, dW_c, dW_o, dW_y = np.zeros_like(self.W_i), np.zeros_like(self.W_f), np.zeros_like(
-            self.W_c), np.zeros_like(self.W_o), np.zeros_like(self.W_y)
-        db_i, db_f, db_c, db_o, db_y = np.zeros_like(self.b_i), np.zeros_like(self.b_f), np.zeros_like(
-            self.b_c), np.zeros_like(self.b_o), np.zeros_like(self.b_y)
+        dW_i, dW_f, dW_c, dW_o = np.zeros_like(self.W_i), np.zeros_like(self.W_f), np.zeros_like(
+            self.W_c), np.zeros_like(self.W_o)
+        db_i, db_f, db_c, db_o = np.zeros_like(self.b_i), np.zeros_like(self.b_f), np.zeros_like(
+            self.b_c), np.zeros_like(self.b_o)
         only_one = True
 
         sigmoid = Sigmoid()
         tan_h = Tanh()
-        softmax = Softmax()
 
         d_out = None
 
@@ -507,17 +499,12 @@ class LSTM(Layer):
                 else:
                     d_out = np.swapaxes(np.copy(dZ), 0, 1)
 
-                d_out = softmax.derivative(d_out)
-
                 if self.return_seq:
                     only_one = False
             else:
                 d_out = np.zeros_like(d_out)
 
-            dW_y += np.swapaxes(hidden_states[:, t], 0, 1) @ d_out
-            db_y += np.sum(d_out, axis=0)
-
-            dh = d_out @ np.swapaxes(self.W_y, 0, 1) + dh_next
+            dh = d_out + dh_next
 
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
             # ----------------
@@ -571,9 +558,9 @@ class LSTM(Layer):
             dc_next = f_history[:, t] * dc
 
         if self.expanding:
-            dZ_next = dZ_next[:, 0]
+            dZ_next = np.swapaxes(dZ_next[:, 0], 0, 1)
 
-        return dW_i, dW_f, dW_c, dW_o, dW_y, db_i, db_f, db_c, db_o, db_y, dZ_next
+        return dW_i, dW_f, dW_c, dW_o, db_i, db_f, db_c, db_o, dZ_next
 
 
 class Bidirectional(Layer):
@@ -669,4 +656,3 @@ class NeuralNetwork:
                 print(f'accuracy = {np.mean(test_prediction == test_real)} ')
 
         return train_loss, valid_loss if validation_set is not None else train_loss
-
