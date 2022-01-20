@@ -275,36 +275,44 @@ class RecLayer(Layer):
         Layer.count += 1
 
     def __call__(self, inputs):
-        if 'U' not in vars(self).keys():
-            prev_size = inputs.shape[-1] if self.return_seq else inputs.shape[0]
-            self.W, self.U, self.V, self.b, self.c = self.build_weights(prev_size)
 
-        concat_weights = np.concatenate([self.U, self.W], axis=0)
+        if len(inputs.shape) == 3:
+            inputs = np.swapaxes(inputs, 0, -1)
 
         if len(inputs.shape) == 2:
-            inputs = np.swapaxes(inputs, 0, 1)
             self.expanding = True
             inputs = np.expand_dims(inputs, axis=1)
 
-        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
-        outputs = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+        hidden_states = np.zeros((self.n_units, inputs.shape[1] + 1, inputs.shape[-1]))
+        outputs = np.zeros((self.n_units, inputs.shape[1], inputs.shape[-1]))
+
+        softmax = Softmax()
+
+        if 'U' not in vars(self).keys():
+            prev_size = inputs.shape[0]
+            self.W, self.U, self.V, self.b, self.c = self.build_weights(prev_size)
+
+        concat_weights = np.concatenate([self.U, self.W], axis=-1)
 
         for t in range(inputs.shape[1]):
 
-            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
-
-            h = concat_input @ concat_weights + self.b
-
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=0)
+            h = concat_weights @ concat_input + self.b[:, None]
             hidden_states[:, t] = self.activation(h) if self.activation is not None else h
-
-            o = hidden_states[:, t] @ self.V + self.c
-            outputs[:, t] = Softmax()(o)
+            o = self.V @ hidden_states[:, t] + self.c[:, None]
+            outputs[:, t] = softmax(o)
 
         self.cache = (inputs, hidden_states, outputs)
-        return np.swapaxes(outputs[:, -1], 0, 1) if not self.return_seq else outputs
+
+        if self.return_seq:
+            result = np.swapaxes(outputs, 0, -1)
+        else:
+            result = outputs[:, -1]
+
+        return result
 
     def build_weights(self, prev_size):
-        W = self.weights_initializer(prev_size, self.n_units, size=(prev_size, self.n_units))
+        W = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, prev_size))
         U = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
         V = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units))
         b = self.bias_initializer(self.n_units, size=None)
@@ -328,14 +336,13 @@ class RecLayer(Layer):
 
     def get_gradients(self, dZ):
 
-        only_one = True
-
         inputs, hidden_states, outputs = self.cache
         seq_count = inputs.shape[1]
 
-        dZ_next = np.zeros_like(inputs)
+        if len(dZ.shape) == 2:
+            dZ = np.expand_dims(dZ, axis=1)
 
-        inputs, hidden_states, outputs = self.cache
+        dZ_next = np.zeros_like(inputs)
 
         dW = np.zeros_like(self.W)
         dV = np.zeros_like(self.V)
@@ -344,39 +351,37 @@ class RecLayer(Layer):
         dc = np.zeros_like(self.c)
 
         dh_next = np.zeros_like(hidden_states[:, 0])
-        d_out = None
+        softmax = Softmax()
+
+        d_out = softmax.derivative(dZ[:, -1])
 
         for t in reversed(range(seq_count)):
-
-            if only_one:
-                if self.return_seq:
-                    d_out = np.copy(dZ[:, t])
-                else:
-                    d_out = np.swapaxes(np.copy(dZ), 0, 1)
-
-                d_out = Softmax().derivative(d_out)
-
-                if self.return_seq:
-                    only_one = False
+            if seq_count == 1:
+                pass
             else:
-                d_out = np.zeros_like(d_out)
+                if dZ.shape[1] == 1:
+                    d_out = np.zeros_like(d_out)
+                else:
+                    d_out = softmax.derivative(np.swapaxes(dZ[:, t], 0, 1))
 
-            dV += np.swapaxes(hidden_states[:, t], 0, 1) @ d_out
-            dc += np.sum(d_out, axis=0)
+            dV += d_out @ np.swapaxes(hidden_states[:, t], 0, 1)
+            dc += np.sum(d_out, axis=-1)
 
-            dh = d_out @ np.swapaxes(self.V, 0, 1) + dh_next
+            dh = np.swapaxes(self.V, 0, 1) @ d_out + dh_next
             dh_rec = self.activation.derivative(hidden_states[:, t]) * dh
 
-            db += np.sum(dh_rec, axis=0)
+            db += np.sum(dh_rec, axis=-1)
 
-            dW += np.swapaxes(inputs[:, t], 0, 1) @ dh_rec
-            dU += np.swapaxes(hidden_states[:, t+1], 0, 1) @ dh_rec
+            dW += dh_rec @ np.swapaxes(inputs[:, t], 0, 1)
+            dU += dh_rec @ np.swapaxes(hidden_states[:, t+1], 0, 1)
 
-            dh_next = dh_rec @ np.swapaxes(self.U, 0, 1)
-            dZ_next[:, t] = dh_rec @ np.swapaxes(self.W, 0, 1)
+            dh_next = np.swapaxes(self.U, 0, 1) @ dh_rec
+            dZ_next[:, t] = np.swapaxes(self.W, 0, 1) @ dh_rec
 
-        if self.expanding:
-            dZ_next = np.swapaxes(dZ_next[:, 0], 0, 1)
+        if (not self.return_seq and dZ_next.shape[1] != 1) or self.return_seq:
+            dZ_next = np.swapaxes(dZ_next, 0, -1)
+        else:
+            dZ_next = dZ_next[:, -1]
 
         return dW, dU, db, dV, dc, dZ_next
 
@@ -403,46 +408,55 @@ class LSTM(Layer):
 
     def __call__(self, inputs):
 
-        if 'W_i' not in vars(self).keys():
-            prev_size = inputs.shape[-1] if self.return_seq else inputs.shape[0]
-            self.W_i, self.W_f, self.W_c, self.W_o, \
-                self.b_i, self.b_f, self.b_c, self.b_o = self.build_weights(prev_size)
+        if len(inputs.shape) == 3:
+            inputs = np.swapaxes(inputs, 0, -1)
 
         if len(inputs.shape) == 2:
-            inputs = np.swapaxes(inputs, 0, 1)
             self.expanding = True
             inputs = np.expand_dims(inputs, axis=1)
 
-        f_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
-        i_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
-        o_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
-        c_history = np.zeros((inputs.shape[0], inputs.shape[1], self.n_units))
+        if 'W_i' not in vars(self).keys():
+            prev_size = inputs.shape[0]
+            self.W_i, self.W_f, self.W_c, self.W_o, \
+                self.b_i, self.b_f, self.b_c, self.b_o = self.build_weights(prev_size)
 
-        c_current_history = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
-        hidden_states = np.zeros((inputs.shape[0], inputs.shape[1] + 1, self.n_units))
+        f_history = np.zeros((self.n_units, inputs.shape[1], inputs.shape[-1]))
+        i_history = np.zeros((self.n_units, inputs.shape[1], inputs.shape[-1]))
+        o_history = np.zeros((self.n_units, inputs.shape[1], inputs.shape[-1]))
+        c_history = np.zeros((self.n_units, inputs.shape[1], inputs.shape[-1]))
+        c_current_history = np.zeros((self.n_units, inputs.shape[1] + 1, inputs.shape[-1]))
+        hidden_states = np.zeros((self.n_units, inputs.shape[1] + 1, inputs.shape[-1]))
 
         sigmoid = Sigmoid()
         tanh = Tanh()
 
         for t in range(inputs.shape[1]):
-            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=0)
 
-            i_history[:, t] = sigmoid(concat_input @ self.W_i + self.b_i)
-            f_history[:, t] = sigmoid(concat_input @ self.W_f + self.b_f)
-            c_history[:, t] = tanh(concat_input @ self.W_c + self.b_c)
-            o_history[:, t] = sigmoid(concat_input @ self.W_o + self.b_o)
+            #print(concat_input.shape, self.W_i.shape)
+
+            i_history[:, t] = sigmoid(self.W_i @ concat_input + self.b_i[:, None])
+            f_history[:, t] = sigmoid(self.W_f @ concat_input + self.b_f[:, None])
+            c_history[:, t] = tanh(self.W_c @ concat_input + self.b_c[:, None])
+            o_history[:, t] = sigmoid(self.W_o @ concat_input + self.b_o[:, None])
 
             c_current_history[:, t] = f_history[:, t] * c_current_history[:, t - 1] + i_history[:, t] * c_history[:, t]
             hidden_states[:, t] = o_history[:, t] * tanh(c_current_history[:, t])
 
         self.cache = (inputs, c_current_history, hidden_states, i_history, f_history, c_history, o_history)
-        return np.swapaxes(hidden_states[:, -1], 0, 1) if not self.return_seq else hidden_states[:, :-1]
+
+        if self.return_seq:
+            result = np.swapaxes(hidden_states[:, :-1], 0, -1)
+        else:
+            result = hidden_states[:, -1]
+
+        return result
 
     def build_weights(self, prev_size):
-        W_i = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
-        W_f = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
-        W_c = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
-        W_o = self.weights_initializer(prev_size, self.n_units, size=(self.n_units + prev_size, self.n_units))
+        W_i = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units + prev_size))
+        W_f = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units + prev_size))
+        W_c = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units + prev_size))
+        W_o = self.weights_initializer(prev_size, self.n_units, size=(self.n_units, self.n_units + prev_size))
         b_i = self.bias_initializer(self.n_units, size=None)
         b_f = self.bias_initializer(self.n_units, size=None)
         b_c = self.bias_initializer(self.n_units, size=None)
@@ -480,12 +494,14 @@ class LSTM(Layer):
             self.W_c), np.zeros_like(self.W_o)
         db_i, db_f, db_c, db_o = np.zeros_like(self.b_i), np.zeros_like(self.b_f), np.zeros_like(
             self.b_c), np.zeros_like(self.b_o)
-        only_one = True
 
         sigmoid = Sigmoid()
         tan_h = Tanh()
 
-        d_out = None
+        if len(dZ.shape) == 2:
+            dZ = np.expand_dims(dZ, axis=1)
+
+        d_out = dZ[:, -1]
 
         dh_next = np.zeros_like(hidden_states[:, 0])
         dc_next = np.zeros_like(c_current_history[:, 0])
@@ -493,27 +509,24 @@ class LSTM(Layer):
 
         for t in reversed(range(seq_count)):
 
-            if only_one:
-                if self.return_seq:
-                    d_out = np.copy(dZ[:, t])
-                else:
-                    d_out = np.swapaxes(np.copy(dZ), 0, 1)
-
-                if self.return_seq:
-                    only_one = False
+            if seq_count == 1:
+                pass
             else:
-                d_out = np.zeros_like(d_out)
+                if dZ.shape[1] == 1:
+                    d_out = np.zeros_like(d_out)
+                else:
+                    d_out = np.swapaxes(dZ[:, t], 0, 1)
 
             dh = d_out + dh_next
 
-            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=-1)
+            concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=0)
             # ----------------
             dho = tan_h(c_current_history[:, t]) * dh
             dho *= sigmoid.derivative(o_history[:, t])
 
-            dW_o += np.swapaxes(concat_input, 0, 1) @ dho
-            db_o += np.sum(dho, axis=0)
-            dZ_o = dho @ np.swapaxes(self.W_o, 0, 1)
+            dW_o += dho @ np.swapaxes(concat_input, 0, 1)
+            db_o += np.sum(dho, axis=-1)
+            dZ_o = np.swapaxes(self.W_o, 0, 1) @ dho
 
             # ----------------
 
@@ -525,40 +538,42 @@ class LSTM(Layer):
             dhf = c_current_history[:, t - 1] * dc
             dhf *= sigmoid.derivative(f_history[:, t])
 
-            dW_f += np.swapaxes(concat_input, 0, 1) @ dhf
-            db_f += np.sum(dhf, axis=0)
-            dZ_f = dhf @ np.swapaxes(self.W_f, 0, 1)
+            dW_f += dhf @ np.swapaxes(concat_input, 0, 1)
+            db_f += np.sum(dhf, axis=-1)
+            dZ_f = np.swapaxes(self.W_f, 0, 1) @ dhf
 
             # ----------------
 
             dhi = c_history[:, t] * dc
             dhi *= sigmoid.derivative(i_history[:, t])
 
-            dW_i += np.swapaxes(concat_input, 0, 1) @ dhi
-            db_i += np.sum(dhi, axis=0)
-            dZ_i = dhi @ np.swapaxes(self.W_i, 0, 1)
+            dW_i += dhi @ np.swapaxes(concat_input, 0, 1)
+            db_i += np.sum(dhi, axis=-1)
+            dZ_i = np.swapaxes(self.W_i, 0, 1) @ dhi
 
             # ----------------
 
             dhc = i_history[:, t] * dc
             dhc *= tan_h.derivative(c_history[:, t])
 
-            dW_c += np.swapaxes(concat_input, 0, 1) @ dhc
-            db_c += np.sum(dhc, axis=0)
-            dZ_c = dhc @ np.swapaxes(self.W_c, 0, 1)
+            dW_c += dhc @ np.swapaxes(concat_input, 0, 1)
+            db_c += np.sum(dhc, axis=-1)
+            dZ_c = np.swapaxes(self.W_c, 0, 1) @ dhc
 
             # ----------------------
 
             d_concat = dZ_i + dZ_f + dZ_o + dZ_c
 
-            dZ_next[:, t] = d_concat[:, self.n_units:]
+            dZ_next[:, t] = d_concat[self.n_units:]
 
-            dh_next = d_concat[:, :self.n_units]
+            dh_next = d_concat[:self.n_units]
 
             dc_next = f_history[:, t] * dc
 
-        if self.expanding:
-            dZ_next = np.swapaxes(dZ_next[:, 0], 0, 1)
+        if (not self.return_seq and dZ_next.shape[1] != 1) or self.return_seq:
+            dZ_next = np.swapaxes(dZ_next, 0, -1)
+        else:
+            dZ_next = dZ_next[:, -1]
 
         return dW_i, dW_f, dW_c, dW_o, db_i, db_f, db_c, db_o, dZ_next
 
