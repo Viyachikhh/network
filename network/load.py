@@ -9,7 +9,7 @@ def to_categorical(label):
 
 
 def load(reshape=False):
-    loader = MNIST('/home/_viyachikhh/python-mnist/data/')
+    loader = MNIST('data/')
     X_train, y_train = loader.load_training()
     X_train = np.array(X_train)
     X_train = X_train / 255. - 0.5
