@@ -1,3 +1,6 @@
+import logging
+import sys
+
 from collections import OrderedDict
 from timeit import default_timer
 
@@ -10,6 +13,7 @@ from network.losses import CategoricalCrossEntropy
 from network.utils import get_activation
 
 AVAILABLE_ACTIVATIONS = ['tanh', 'sigmoid', 'relu', 'softmax']
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 
 class Layer(ABC):
@@ -653,21 +657,21 @@ class NeuralNetwork:
 
         for epoch in range(count_epochs):
             rand_int = np.random.randint(data.shape[0], size=size_of_batch)  # generate random examples
-            print(f'epoch {epoch + 1}')
+            logging.info(f'  epoch {epoch + 1}')
             start = default_timer()
             predictions = self(data[rand_int])
-            print(f'time = {default_timer() - start}')
+            logging.info(f'  time = {default_timer() - start}')
             loss = self.loss.calculate_loss(labels[rand_int].T, predictions)
             self.back_propagation()
-            print(f'loss = {loss}', end=', ')
+            logging.info(f'  loss = {loss}')
             train_loss.append(loss)
             if validation_set is not None:  # on validation
                 val_prediction = self(validation_set[0])
                 val_loss = self.loss.calculate_loss(validation_set[1].T, val_prediction, without_memory=True)
                 valid_loss.append(val_loss)
-                print(f'validation loss = {val_loss}')
+                logging.info(f'  validation loss = {val_loss}')
                 test_real = np.argmax(validation_set[1].T, axis=0)
                 test_prediction = np.argmax(val_prediction, axis=0)
-                print(f'accuracy = {np.mean(test_prediction == test_real)} ')
+                logging.info(f'  accuracy = {np.mean(test_prediction == test_real)} ')
 
         return train_loss, valid_loss if validation_set is not None else train_loss
