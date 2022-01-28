@@ -1,4 +1,3 @@
-
 FROM python:3.9
 
 WORKDIR /code
@@ -6,10 +5,7 @@ WORKDIR /code
 COPY requirements.txt .
 COPY data/ /code/data/
 
-RUN pip install -r requirements.txt
-
-COPY network/ /code/network/
-
+RUN pip install setup.py
 
 COPY src/ .
 
