@@ -1,6 +1,6 @@
 import numpy as np
 
-from network.activations import *
+from deepnetwork.activations import *
 
 
 def get_activation(str_name):

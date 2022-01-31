@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-from network.core import NeuralNetwork, DenseLayer, Conv2DLayer, FlattenLayer, MaxPoolingLayer
-from network.optimizers import Adam
-from network.load import load
+from deepnetwork.core import NeuralNetwork, DenseLayer, Conv2DLayer, FlattenLayer, MaxPoolingLayer
+from deepnetwork.optimizers import Adam
+from deepnetwork.load import load
 
 
 def make_model():

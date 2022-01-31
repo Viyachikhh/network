@@ -4,13 +4,12 @@ import sys
 from collections import OrderedDict
 from timeit import default_timer
 
-from network.activations import *
-from network.utils import col2im_indices, im2col_indices, getWindows
-from network.initializers import XavierWeights, ZerosInitializer
-from network.optimizers import Momentum
-from network.losses import CategoricalCrossEntropy
-
-from network.utils import get_activation
+from deepnetwork.activations import *
+from deepnetwork.utils import col2im_indices, im2col_indices, getWindows
+from deepnetwork.initializers import XavierWeights, ZerosInitializer
+from deepnetwork.optimizers import Momentum
+from deepnetwork.losses import CategoricalCrossEntropy
+from deepnetwork.utils import get_activation
 
 AVAILABLE_ACTIVATIONS = ['tanh', 'sigmoid', 'relu', 'softmax']
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)

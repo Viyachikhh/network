@@ -8,7 +8,7 @@ COPY data/ /code/data/
 
 RUN pip install -r requirements.txt
 
-COPY network/ /code/network/
+COPY deepnetwork/ /code/deepnetwork/
 
 
 COPY src/ .

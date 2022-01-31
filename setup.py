@@ -9,9 +9,9 @@ def install_requires(req_file):
 
 
 setup(
-    name='network',
+    name='deepnetwork',
     version='0.2',
-    packages=['network'],
+    packages=['deepnetwork'],
     install_requires=install_requires('requirements.txt'),
     url='https://github.com/Viyachikhh/network'
 )
