@@ -436,8 +436,6 @@ class LSTM(Layer):
         for t in range(inputs.shape[1]):
             concat_input = np.concatenate([hidden_states[:, t - 1], inputs[:, t]], axis=0)
 
-            #print(concat_input.shape, self.W_i.shape)
-
             i_history[:, t] = sigmoid(self.W_i @ concat_input + self.b_i[:, None])
             f_history[:, t] = sigmoid(self.W_f @ concat_input + self.b_f[:, None])
             c_history[:, t] = tanh(self.W_c @ concat_input + self.b_c[:, None])

@@ -1,48 +1,30 @@
 import numpy as np
 
-from network.utils import getWindows
-
-"""
-В дальнейшем, заменить все np.ndarray на Tensor 
-"""
+from deepnetwork.utils import getWindows
 
 
 class Graph:
-    """
-    Будет частью класса нейронной сети
-    """
 
     def __init__(self):
         self.variables = dict()
         self.operations = dict()
 
     def add_node(self, layer):
-        """
-        Добавить узлы со слоя
-        :return:
-        """
+
         pass
 
     def forward_pass(self):
-        """
-        Выполняется прямой проход графа
-        """
+
         pass
 
     def backward_pass(self, dZ):
-        """
-        Выполняется обратный обход графа
-        :param dZ: Градиент ошибки
-        """
+
         pass
 
     def sort_graph(self):
-        """
-        Топологическая сортировка графа
-        """
 
+        pass
 
-#  -------------элементы графа-------------
 
 class Operation:
 
@@ -54,10 +36,7 @@ class Operation:
 
 
 class Tensor:
-    """
-    Класс  переменной
-    Каждая переменная будет хранить по итогу значение градиента
-    """
+
     count_parameters = 0
 
     def __init__(self, value, history_tensor=None, gradient=None, operation=None, name=None):
@@ -127,19 +106,11 @@ class Tensor:
             for i in range(len(gradient)):
                 tensor = self.history_update[i]
                 tensor.grad = gradient[i]
-                #print(gradient[i])
-                #print(tensor.grad)
-                #optimizer.apply_gradients(tensor)
                 tensor.backward(gradient=gradient[i])
 
 
-#  -------операции над элементами---------
-
-
 class Add(Operation):
-    """
-    x+y, град. = dZ, dZ
-    """
+
     count_operations = 0
 
     def __init__(self):
@@ -165,9 +136,7 @@ class Add(Operation):
 
 
 class Sub(Operation):
-    """
-    x+y, град. = dZ, dZ
-    """
+
     count_operations = 0
 
     def __init__(self):
@@ -195,9 +164,7 @@ class Sub(Operation):
 
 
 class Multiply(Operation):
-    """
-    x*y, град. = dZ*y, dZ*x
-    """
+
     count_operations = 0
 
     def __init__(self):
@@ -225,9 +192,7 @@ class Multiply(Operation):
 
 
 class Pow(Operation):
-    """
-    x^y, град. = dZ * x^(y-1), dZ * x^y * ln(x)
-    """
+
     count_operations = 0
 
     def __init__(self):
@@ -256,9 +221,7 @@ class Pow(Operation):
 
 
 class Matmul(Operation):
-    """
-    x@y, град. = dZ @ y.T, x.T @ dZ
-    """
+
     count_operations = 0
 
     def __init__(self):
@@ -273,9 +236,7 @@ class Matmul(Operation):
 
 
 class Divide(Operation):
-    """
-    x/y, град. = dZ * (1/y) , dZ * (-x) * (1 / y^2)
-    """
+
     count_operations = 0
 
     def __init__(self):
